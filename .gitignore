@@ -1,0 +1,10 @@
+web/node_modules/
+web/*.tsbuildinfo
+.impeccable/review/
+.impeccable/mocks/
+*.db
+*.db-shm
+*.db-wal
+*.env
+*.pem
+bin/
