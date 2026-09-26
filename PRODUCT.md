@@ -59,7 +59,8 @@ security model, not a feature gap.
 - Integration contract with gh-agents (spec, "Contrato de integração"):
   the runner switch writes the same repo variables, GitHub App
   `gh-agents-ops` supplies runners/variables/runs API access, and the dashboard
-  repo dogfoods gh-agents. Direct unit controls require the later runner
+  repo dogfoods gh-agents. Runner service units and the cleanup timer appear
+  as native monitored projects. Direct unit controls require the later runner
   operations phase.
 
 ## Capabilities and Constraints
@@ -67,13 +68,14 @@ security model, not a feature gap.
 First release `v0.1` (phase B DoD): installable PWA with network-only API reads;
 host metrics + ~30d sparklines; hybrid
 project discovery (auto-detected candidates promoted explicitly to
-"monitored"); tmux session list with agent detection; read-only fleet runner
-and queue state; per-repo runner-backend switch via GitHub Actions variables,
+"monitored", except native runner units); tmux session list with agent
+detection; read-only fleet runner and queue state; per-repo runner-backend
+switch via GitHub Actions variables,
 including bulk apply and named presets; single-password auth. Alert events
 queue in SQLite while SMTP is unprovisioned.
 
 Concept target beyond `v0.1`: file access; xterm.js terminal over SSH PTY;
-one-click read-only tmux attach; runner unit display and restart/drain; SMTP
+one-click read-only tmux attach; runner unit restart/drain; SMTP
 delivery. The phase B spec explicitly permits tmux attach and alerts in
 `v0.2` without a schema change.
 

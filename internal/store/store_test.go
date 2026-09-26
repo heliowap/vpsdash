@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -48,6 +49,68 @@ func TestMigrationsAndCandidatePromotion(t *testing.T) {
 	}
 	if got, err := s.ConsecutiveFailures(ctx, projects[0].ID); err != nil || got != 1 {
 		t.Fatalf("failures = %d, %v", got, err)
+	}
+}
+
+func TestNativeRunnerUnitIsMonitoredWithoutPromotion(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertHost(ctx, Host{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps"}); err != nil {
+		t.Fatal(err)
+	}
+	unit, err := s.UpsertNativeRunnerUnit(ctx, "vps", "actions.runner.owner-repo.own--repo-1.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unit.Monitored || unit.Source != "systemd" || unit.Expected != `["user:actions.runner.owner-repo.own--repo-1.service"]` {
+		t.Fatalf("native unit = %+v", unit)
+	}
+	if err := s.UpsertCandidate(ctx, "vps", unit.Name, "systemd"); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := s.Projects(ctx)
+	if err != nil || len(projects) != 1 || !projects[0].Monitored || !projects[0].Native {
+		t.Fatalf("project after discovery = %+v, %v", projects, err)
+	}
+	if err := s.SetMonitored(ctx, unit.ID, false, "", ""); err == nil {
+		t.Fatal("native unit was demoted through SetMonitored")
+	}
+}
+
+func TestMigrationMarksExistingProjectsNonNative(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vpsdash.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := db.Exec(migrations[i]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations(version) VALUES (?)`, i+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO hosts(id,tailnet_name,kind) VALUES ('vps','vps.example.ts.net','vps')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO projects(host_id,name,source,monitored) VALUES ('vps','web.service','systemd',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	projects, err := s.Projects(context.Background())
+	if err != nil || len(projects) != 1 || projects[0].Native || !projects[0].Monitored {
+		t.Fatalf("migrated projects = %+v, %v", projects, err)
 	}
 }
 

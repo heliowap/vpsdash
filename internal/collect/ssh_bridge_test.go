@@ -1,12 +1,43 @@
 package collect
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestSSHBridgeApprovesRunnerUnitRead(t *testing.T) {
+	bridge := filepath.Join("..", "..", "scripts", "ssh-readonly.py")
+	contents, err := os.ReadFile(bridge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(RunnerUnitsScript)))
+	if !strings.Contains(string(contents), `"`+digest+`"`) {
+		t.Fatalf("runner unit script digest %s missing from forced SSH command", digest)
+	}
+}
+
+func TestRunnerBridgeRejectsOtherCollectorReads(t *testing.T) {
+	bridge := filepath.Join("..", "..", "scripts", "ssh-readonly.py")
+	command := func(script string) ([]byte, error) {
+		cmd := exec.Command("python3", "-I", bridge, "runner-units")
+		cmd.Env = append(os.Environ(), "SSH_ORIGINAL_COMMAND=sh -s")
+		cmd.Stdin = strings.NewReader(script)
+		return cmd.CombinedOutput()
+	}
+	if output, err := command(MetricsScript); err == nil || !strings.Contains(string(output), "comando SSH não permitido") {
+		t.Fatalf("runner bridge accepted metrics: %q, %v", output, err)
+	}
+	output, err := command(RunnerUnitsScript)
+	if err != nil && strings.Contains(string(output), "comando SSH não permitido") {
+		t.Fatalf("runner unit read was denied: %q, %v", output, err)
+	}
+}
 
 func runSSHBridge(t *testing.T, command, input string) ([]byte, error) {
 	t.Helper()
@@ -23,10 +54,10 @@ func TestSSHBridgeAcceptsCollectorReads(t *testing.T) {
 		{"discovery", DiscoveryScript},
 		{"sessions", SessionsScript},
 	} {
-			t.Run(tc.name, func(t *testing.T) {
-				output, err := runSSHBridge(t, "sh -s", tc.script)
-				if err != nil {
-					t.Fatalf("bridge rejected %s: %v", tc.name, err)
+		t.Run(tc.name, func(t *testing.T) {
+			output, err := runSSHBridge(t, "sh -s", tc.script)
+			if err != nil {
+				t.Fatalf("bridge rejected %s: %v", tc.name, err)
 			}
 			if tc.name == "metrics" {
 				if _, err := ParseMetricsSnapshot(string(output)); err != nil {
@@ -49,6 +80,7 @@ func TestSSHBridgeRejectsArbitraryCommands(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "written")
 	for _, tc := range []struct{ command, input string }{
 		{"sh -s", "touch " + target + "\n"},
+		{"sh -s", RunnerUnitsScript},
 		{"touch " + target, MetricsScript},
 	} {
 		if output, err := runSSHBridge(t, tc.command, tc.input); err == nil {

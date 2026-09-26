@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Forced SSH command for the vpsdash collector key.
 
-The three fixed collector scripts are accepted by their exact SHA-256 digest.
+The fixed collector scripts are accepted by their exact SHA-256 digest.
 Health checks run direct commands with argument lists, never a client shell.
 """
 
@@ -16,6 +16,7 @@ APPROVED_SCRIPTS = {
     "bd00bf9b9b1ce93a4d5fe8e7307e9af7f0bb72747fd5ef5183582545aa1ed724",  # discovery
     "65f9c354476d0e225f0e529734d1b8a7eee4130d5ec56f5376ad1844c073c82b",  # sessions
 }
+RUNNER_UNITS_DIGEST = "926eba140ff5db5714e56102804c6dbb09d05c8af70647a881ea44fbe818888c"
 
 
 def environment():
@@ -31,9 +32,9 @@ def deny():
     return 126
 
 
-def fixed_script():
+def fixed_script(allowed):
     script = sys.stdin.buffer.read(4097)
-    if len(script) > 4096 or hashlib.sha256(script).hexdigest() not in APPROVED_SCRIPTS:
+    if len(script) > 4096 or hashlib.sha256(script).hexdigest() not in allowed:
         return deny()
     result = subprocess.run(
         ["/bin/sh", "-s"], input=script, capture_output=True, timeout=9, env=environment()
@@ -72,9 +73,15 @@ def health(command):
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "runner-units":
+        if os.environ.get("SSH_ORIGINAL_COMMAND", "") != "sh -s":
+            return deny()
+        return fixed_script({RUNNER_UNITS_DIGEST})
+    if len(sys.argv) != 1:
+        return deny()
     command = os.environ.get("SSH_ORIGINAL_COMMAND", "")
     if command == "sh -s":
-        return fixed_script()
+        return fixed_script(APPROVED_SCRIPTS)
     if command.startswith("vpsdash-health "):
         return health(command)
     return deny()

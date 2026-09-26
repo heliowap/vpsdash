@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,6 +57,48 @@ func TestLoadRequiresDistinctKeysForRemoteHosts(t *testing.T) {
 func TestExampleInventoryIsValid(t *testing.T) {
 	if _, err := Load(filepath.Join("..", "..", "config.example.json")); err != nil {
 		t.Fatalf("example inventory: %v", err)
+	}
+}
+
+func TestLoadValidatesRunnerUnitAccount(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	base := `{"hosts":[{"id":"vps","tailnet_name":"vps.example.ts.net","kind":"vps","ssh_user":"operator","ssh_key_file":"/keys/operator"}],"runner_unit_hosts":[%s]}`
+	for _, tc := range []struct {
+		name, account string
+		valid         bool
+	}{
+		{"separate key", `{"host_id":"vps","ssh_user":"gh-agents","ssh_key_file":"/keys/runner"}`, true},
+		{"unknown host", `{"host_id":"missing","ssh_user":"gh-agents","ssh_key_file":"/keys/runner"}`, false},
+		{"shared key", `{"host_id":"vps","ssh_user":"gh-agents","ssh_key_file":"/keys/operator"}`, false},
+		{"missing key", `{"host_id":"vps","ssh_user":"gh-agents"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(file, []byte(fmt.Sprintf(base, tc.account)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(file)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid = %t, error = %v", tc.valid, err)
+			}
+		})
+	}
+}
+
+func TestNativeRunnerUnitIdentification(t *testing.T) {
+	c := Config{RunnerUnitHosts: []RunnerUnitHost{{HostID: "vps"}}}
+	for _, tc := range []struct {
+		host, name string
+		want       bool
+	}{
+		{"vps", "actions.runner.owner-repo.owner--repo-1.service", true},
+		{"vps", "gh-agents-cleanup.timer", true},
+		{"other", "gh-agents-cleanup.timer", false},
+		{"vps", "other.service", false},
+		{"vps", "actions.runner.bad/name.service", false},
+	} {
+		if got := c.IsNativeRunnerUnit(tc.host, tc.name); got != tc.want {
+			t.Errorf("IsNativeRunnerUnit(%q, %q) = %t, want %t", tc.host, tc.name, got, tc.want)
+		}
 	}
 }
 

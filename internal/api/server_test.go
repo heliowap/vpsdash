@@ -32,6 +32,13 @@ func TestAuthAndSwitchFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	if err := s.UpsertHost(context.Background(), store.Host{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps"}); err != nil {
+		t.Fatal(err)
+	}
+	native, err := s.UpsertNativeRunnerUnit(context.Background(), "vps", "gh-agents-cleanup.timer")
+	if err != nil {
+		t.Fatal(err)
+	}
 	hash, err := auth.HashPassword("correct horse battery staple")
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +78,18 @@ func TestAuthAndSwitchFlow(t *testing.T) {
 	}
 	if got := request("GET", "/api/dashboard", nil, cookie, "").Code; got != 200 {
 		t.Fatalf("dashboard = %d", got)
+	}
+	var dashboard struct {
+		Projects []store.Project `json:"projects"`
+	}
+	if err := json.Unmarshal(request("GET", "/api/dashboard", nil, cookie, "").Body.Bytes(), &dashboard); err != nil {
+		t.Fatal(err)
+	}
+	if len(dashboard.Projects) != 1 || !dashboard.Projects[0].Native {
+		t.Fatalf("native project missing from dashboard: %+v", dashboard.Projects)
+	}
+	if got := request("PATCH", "/api/projects/"+strconv.FormatInt(native.ID, 10), []byte(`{"monitored":false}`), cookie, session.CSRF).Code; got != 403 {
+		t.Fatalf("native project editable: %d", got)
 	}
 	body := []byte(`{"variable":"AGENT_RUNNER","label":"ubuntu-latest"}`)
 	path := "/api/repos/heliowap/vpsdash/switch"

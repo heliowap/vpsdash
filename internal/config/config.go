@@ -28,14 +28,38 @@ type Repository struct {
 	RunnerHostID    string `json:"runner_host_id,omitempty"`
 }
 
+type RunnerUnitHost struct {
+	HostID     string `json:"host_id"`
+	SSHUser    string `json:"ssh_user"`
+	SSHKeyFile string `json:"ssh_key_file"`
+}
+
 type Config struct {
-	Listen       string       `json:"listen"`
-	Database     string       `json:"database"`
-	Hosts        []Host       `json:"hosts"`
-	Repositories []Repository `json:"repositories"`
+	Listen          string           `json:"listen"`
+	Database        string           `json:"database"`
+	Hosts           []Host           `json:"hosts"`
+	RunnerUnitHosts []RunnerUnitHost `json:"runner_unit_hosts,omitempty"`
+	Repositories    []Repository     `json:"repositories"`
 }
 
 var safeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var runnerServiceName = regexp.MustCompile(`^actions\.runner\.[A-Za-z0-9._-]+\.service$`)
+
+func IsRunnerUnitName(name string) bool {
+	return len(name) <= 255 && (name == "gh-agents-cleanup.timer" || runnerServiceName.MatchString(name))
+}
+
+func (c Config) IsNativeRunnerUnit(hostID, name string) bool {
+	if !IsRunnerUnitName(name) {
+		return false
+	}
+	for _, runner := range c.RunnerUnitHosts {
+		if runner.HostID == hostID {
+			return true
+		}
+	}
+	return false
+}
 
 func Load(path string) (Config, error) {
 	c := Config{Listen: "127.0.0.1:8484"}
@@ -66,6 +90,7 @@ func (c Config) Validate() error {
 		return errors.New("listen must bind to loopback for tailscale serve")
 	}
 	seenHosts := map[string]bool{}
+	hostKinds := map[string]string{}
 	seenKeys := map[string]bool{}
 	for _, h := range c.Hosts {
 		if !safeName.MatchString(h.ID) || h.TailnetName == "" {
@@ -75,6 +100,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("duplicate host: %s", h.ID)
 		}
 		seenHosts[h.ID] = true
+		hostKinds[h.ID] = h.Kind
 		if h.Kind != "vps" && h.Kind != "presence" {
 			return fmt.Errorf("invalid kind for host %s", h.ID)
 		}
@@ -90,6 +116,23 @@ func (c Config) Validate() error {
 			}
 			seenKeys[h.SSHKeyFile] = true
 		}
+	}
+	seenRunnerHosts := map[string]bool{}
+	for _, runner := range c.RunnerUnitHosts {
+		if !seenHosts[runner.HostID] || hostKinds[runner.HostID] != "vps" {
+			return fmt.Errorf("runner unit host %s must reference a VPS", runner.HostID)
+		}
+		if seenRunnerHosts[runner.HostID] {
+			return fmt.Errorf("duplicate runner unit host %s", runner.HostID)
+		}
+		seenRunnerHosts[runner.HostID] = true
+		if runner.SSHUser == "" || !filepath.IsAbs(runner.SSHKeyFile) {
+			return fmt.Errorf("runner unit host %s needs ssh_user and an absolute ssh_key_file", runner.HostID)
+		}
+		if seenKeys[runner.SSHKeyFile] {
+			return fmt.Errorf("SSH key is reused by runner unit host %s", runner.HostID)
+		}
+		seenKeys[runner.SSHKeyFile] = true
 	}
 	seenRepos := map[string]bool{}
 	for _, repo := range c.Repositories {

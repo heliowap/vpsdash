@@ -76,6 +76,9 @@ func (c *Collector) Start(ctx context.Context) error {
 	}
 	go c.tailnetLoop(ctx)
 	go c.healthLoop(ctx)
+	for _, runnerHost := range c.Config.RunnerUnitHosts {
+		go c.runnerUnitLoop(ctx, runnerHost)
+	}
 	go c.fleetLoop(ctx)
 	go c.maintenanceLoop(ctx)
 	for _, h := range c.Config.Hosts {
@@ -191,6 +194,9 @@ func (c *Collector) pollDiscovery(ctx context.Context, h config.Host) error {
 		return err
 	}
 	for _, candidate := range candidates {
+		if candidate.Source == "systemd" && c.Config.IsNativeRunnerUnit(h.ID, candidate.Name) {
+			continue
+		}
 		if err := c.Store.UpsertCandidate(ctx, h.ID, candidate.Name, candidate.Source); err != nil {
 			return err
 		}
@@ -282,7 +288,7 @@ func (c *Collector) healthLoop(ctx context.Context) {
 func (c *Collector) checkProjects(ctx context.Context, projects []store.Project) {
 	groups := map[string][]store.Project{}
 	for _, p := range projects {
-		if p.Monitored {
+		if p.Monitored && !p.Native {
 			groups[p.HostID] = append(groups[p.HostID], p)
 		}
 	}
@@ -321,16 +327,25 @@ func (c *Collector) checkProject(ctx context.Context, h config.Host, p store.Pro
 	if err != nil {
 		detail = err.Error()
 	}
-	if recordErr := c.Store.RecordCheck(ctx, p.ID, err == nil, detail, time.Now()); recordErr != nil {
+	if recordErr := c.recordProjectCheck(ctx, p, err == nil, detail, time.Now()); recordErr != nil {
 		c.setError("check:"+p.Name, recordErr)
-		return
 	}
-	if err != nil {
+}
+
+func (c *Collector) recordProjectCheck(ctx context.Context, p store.Project, ok bool, detail string, now time.Time) error {
+	if err := c.Store.RecordCheck(ctx, p.ID, ok, detail, now); err != nil {
+		return err
+	}
+	if !ok {
 		count, countErr := c.Store.ConsecutiveFailures(ctx, p.ID)
-		if countErr == nil && count >= 3 {
-			_ = c.Store.QueueAlert(ctx, "project_down", p.HostID+" / "+p.Name, detail)
+		if countErr != nil {
+			return countErr
+		}
+		if count >= 3 {
+			return c.Store.QueueAlert(ctx, "project_down", p.HostID+" / "+p.Name, detail)
 		}
 	}
+	return nil
 }
 
 func (c *Collector) projectHealth(ctx context.Context, h config.Host, p store.Project) error {

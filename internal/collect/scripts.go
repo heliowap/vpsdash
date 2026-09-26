@@ -1,5 +1,23 @@
 package collect
 
+const RunnerUnitsScript = `set -eu
+XDG_RUNTIME_DIR="/run/user/$(id -u)"
+DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+export XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
+systemctl --user show-environment >/dev/null
+for path in "$HOME"/.config/systemd/user/actions.runner.*.service; do
+  [ -e "$path" ] || continue
+  unit=${path##*/}
+  load=$(systemctl --user show "$unit" --property=LoadState --value)
+  state=$(systemctl --user show "$unit" --property=ActiveState --value)
+  printf '%s\t%s\t%s\n' "$unit" "$load" "$state"
+done
+unit=gh-agents-cleanup.timer
+load=$(systemctl --user show "$unit" --property=LoadState --value)
+state=$(systemctl --user show "$unit" --property=ActiveState --value)
+printf '%s\t%s\t%s\n' "$unit" "$load" "$state"
+`
+
 const MetricsScript = `set -eu
 awk '/^cpu / { printf "cpu"; for (i=2;i<=8;i++) printf " %s", $i; printf "\n" }' /proc/stat
 awk '/^(MemTotal|MemAvailable):/ { print $1, $2 }' /proc/meminfo

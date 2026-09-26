@@ -256,6 +256,17 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, 400, "Projeto inválido.")
 		return
 	}
+	projects, err := s.Store.Projects(r.Context())
+	if err != nil {
+		errorResponse(w, 500, "Não foi possível ler os projetos.")
+		return
+	}
+	for _, project := range projects {
+		if project.ID == id && project.Native {
+			errorResponse(w, 403, "Esta unit é monitorada automaticamente.")
+			return
+		}
+	}
 	var body struct {
 		Monitored bool     `json:"monitored"`
 		HealthURL string   `json:"health_url"`

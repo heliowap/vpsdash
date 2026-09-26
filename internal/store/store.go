@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -38,6 +39,7 @@ type Project struct {
 	Name      string `json:"name"`
 	Source    string `json:"source"`
 	Monitored bool   `json:"monitored"`
+	Native    bool   `json:"native,omitempty"`
 	HealthURL string `json:"health_url,omitempty"`
 	Expected  string `json:"expected,omitempty"`
 	CheckOK   *bool  `json:"check_ok,omitempty"`
@@ -106,6 +108,7 @@ CREATE TABLE alerts (
   host_id TEXT PRIMARY KEY REFERENCES hosts(id), online INTEGER NOT NULL, seen_at INTEGER NOT NULL
 );
 CREATE INDEX idx_alerts_pending ON alerts(channel, sent_at);`,
+	`ALTER TABLE projects ADD COLUMN native INTEGER NOT NULL DEFAULT 0 CHECK(native IN (0,1));`,
 }
 
 func migrate(db *sql.DB) error {
@@ -221,8 +224,19 @@ func (s *Store) UpsertCandidate(ctx context.Context, hostID, name, source string
 	return err
 }
 
+func (s *Store) UpsertNativeRunnerUnit(ctx context.Context, hostID, name string) (Project, error) {
+	expected, err := json.Marshal([]string{"user:" + name})
+	if err != nil {
+		return Project{}, err
+	}
+	p := Project{HostID: hostID, Name: name, Source: "systemd", Monitored: true, Native: true, Expected: string(expected)}
+	err = s.db.QueryRowContext(ctx, `INSERT INTO projects(host_id,name,source,monitored,native,expected) VALUES (?,?,'systemd',1,1,?)
+ON CONFLICT(host_id,name,source) DO UPDATE SET monitored=1,native=1,health_url=NULL,expected=excluded.expected RETURNING id`, hostID, name, p.Expected).Scan(&p.ID)
+	return p, err
+}
+
 func (s *Store) Projects(ctx context.Context) ([]Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.host_id,p.name,p.source,p.monitored,COALESCE(p.health_url,''),COALESCE(p.expected,''),
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.host_id,p.name,p.source,p.monitored,p.native,COALESCE(p.health_url,''),COALESCE(p.expected,''),
 c.ok,COALESCE(c.ts,0) FROM projects p LEFT JOIN checks c ON c.rowid=(SELECT rowid FROM checks WHERE project_id=p.id ORDER BY ts DESC,rowid DESC LIMIT 1)
 ORDER BY p.monitored DESC,p.host_id,p.name`)
 	if err != nil {
@@ -232,12 +246,13 @@ ORDER BY p.monitored DESC,p.host_id,p.name`)
 	result := []Project{}
 	for rows.Next() {
 		var p Project
-		var monitored int
+		var monitored, native int
 		var ok sql.NullInt64
-		if err := rows.Scan(&p.ID, &p.HostID, &p.Name, &p.Source, &monitored, &p.HealthURL, &p.Expected, &ok, &p.CheckedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.HostID, &p.Name, &p.Source, &monitored, &native, &p.HealthURL, &p.Expected, &ok, &p.CheckedAt); err != nil {
 			return nil, err
 		}
 		p.Monitored = monitored != 0
+		p.Native = native != 0
 		if ok.Valid {
 			value := ok.Int64 != 0
 			p.CheckOK = &value
@@ -252,7 +267,7 @@ func (s *Store) SetMonitored(ctx context.Context, id int64, monitored bool, heal
 	if monitored {
 		n = 1
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE projects SET monitored=?,health_url=NULLIF(?,''),expected=NULLIF(?, '') WHERE id=?`, n, healthURL, expected, id)
+	result, err := s.db.ExecContext(ctx, `UPDATE projects SET monitored=?,health_url=NULLIF(?,''),expected=NULLIF(?, '') WHERE id=? AND native=0`, n, healthURL, expected, id)
 	if err != nil {
 		return err
 	}

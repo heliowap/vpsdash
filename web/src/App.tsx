@@ -168,17 +168,17 @@ function Projects({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; on
   const visible = showAll || query ? filtered : filtered.slice(0, 8)
   function row(project: Project) {
     const open = expanded === project.id
+    const contents = <>
+      <span className={`status-dot ${!project.monitored || project.check_ok === undefined ? 'is-unknown' : project.check_ok ? 'is-good' : 'is-bad'}`} />
+      <span className="row-copy"><strong>{project.name}</strong><small>{project.host_id} · {project.native ? 'unit nativa' : project.source} · {project.monitored ? age(project.checked_at) : 'candidato'}</small></span>
+      <span className={`state-stamp ${project.check_ok === false ? 'stamp-bad' : ''}`}>{project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
+    </>
     return <article className="project-row" key={project.id}>
-      <button className="row-main" type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : project.id)}>
-        <span className={`status-dot ${!project.monitored || project.check_ok === undefined ? 'is-unknown' : project.check_ok ? 'is-good' : 'is-bad'}`} />
-        <span className="row-copy"><strong>{project.name}</strong><small>{project.host_id} · {project.source} · {project.monitored ? age(project.checked_at) : 'candidato'}</small></span>
-        <span className={`state-stamp ${project.check_ok === false ? 'stamp-bad' : ''}`}>{project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
-        {open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
-      </button>
-      {open && <ProjectEditor key={`${project.id}-${project.monitored}`} project={project} csrf={csrf} onSaved={() => { setExpanded(null); onRefresh() }} />}
+      {project.native ? <div className="row-main native-main">{contents}</div> : <button className="row-main" type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : project.id)}>{contents}{open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}</button>}
+      {open && !project.native && <ProjectEditor key={`${project.id}-${project.monitored}`} project={project} csrf={csrf} onSaved={() => { setExpanded(null); onRefresh() }} />}
     </article>
   }
-  return <div className="page-body"><div className="page-title"><h1>Projetos</h1><p>A descoberta é silenciosa. Só projetos promovidos geram alertas após três falhas seguidas.</p></div>
+  return <div className="page-body"><div className="page-title"><h1>Projetos</h1><p>Candidatos só geram alertas após promoção. As units nativas dos runners são monitoradas automaticamente.</p></div>
     <section className="ledger-section"><div className="section-heading"><h2>Monitorados</h2><span className="section-count">{monitored.length}</span></div>{monitored.length ? <div className="ruled-list">{monitored.map(row)}</div> : <div className="empty-line">Nenhum projeto monitorado ainda. Abra um candidato abaixo para definir o critério.</div>}</section>
     <section className="ledger-section"><div className="section-heading"><h2>Candidatos</h2><span className="section-count">{candidates.length}</span></div>{candidates.length ? <><div className="candidate-tools"><input type="search" aria-label="Buscar candidatos" placeholder="Buscar por nome, host ou origem" value={query} onChange={event => setQuery(event.target.value)} /></div><div className="ruled-list">{visible.length ? visible.map(row) : <div className="empty-line">Nenhum candidato corresponde à busca.</div>}</div>{!query && !showAll && candidates.length > 8 && <button type="button" className="button candidate-more" onClick={() => setShowAll(true)}>Ver todos os {candidates.length} candidatos</button>}</> : <div className="empty-line">Aguardando a próxima descoberta em docker, systemd e tmux.</div>}</section>
   </div>

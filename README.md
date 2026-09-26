@@ -13,6 +13,8 @@ sessões, e até 90 dias de alertas enviados. A descoberta de projetos cria
 candidatos silenciosos; somente projetos promovidos são verificados e podem
 gerar alerta após três falhas. Runners e fila vêm da API do GitHub App. O
 switch altera as variáveis Actions do próprio repositório.
+As units `actions.runner.*` e `gh-agents-cleanup.timer` da conta `gh-agents`
+entram automaticamente como projetos monitorados, sem promoção manual.
 
 O canal SMTP mostra "não provisionado" e mantém eventos pendentes enquanto
 `smtp.env` não existir. A lista tmux detecta o agente; o terminal web e o
@@ -87,6 +89,20 @@ adicioná-la ao `known_hosts` de `vpsdash`; ajuste `ssh_user` e `ssh_key_file`
 no inventário.
 O painel executa cada coleta com timeout de 10 s. Windows entra apenas pela
 presença Tailscale, sem SSH.
+
+Para monitorar as units do `gh-agents` no host local, configure uma segunda
+chave, exclusiva da conta da frota. Execute como `helio`; o script pede sudo,
+instala a ponte SSH com autorização apenas para a leitura das units, confere
+a host key e testa uma coleta pela própria chave do `vpsdash`:
+
+```bash
+scripts/setup-runner-collector.sh
+```
+
+Mantenha `runner_unit_hosts` no inventário com `ssh_user: "gh-agents"` e
+`ssh_key_file` apontando para essa segunda chave. O painel usa a conta da
+frota para ler `systemctl --user` a cada 30 s. Uma falha de SSH ou do bus
+systemd aparece como erro do coletor; não conta como falha de uma unit.
 
 Inicie o serviço:
 
