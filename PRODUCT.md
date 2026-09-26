@@ -63,7 +63,8 @@ security model, not a feature gap.
 
 ## Capabilities and Constraints
 
-First release `v0.1` (phase B DoD): host metrics + ~30d sparklines; hybrid
+First release `v0.1` (phase B DoD): installable PWA with network-only API reads;
+host metrics + ~30d sparklines; hybrid
 project discovery (auto-detected candidates promoted explicitly to
 "monitored"); tmux session list with agent detection; read-only fleet runner
 and queue state; per-repo runner-backend switch via GitHub Actions variables,

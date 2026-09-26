@@ -14,6 +14,7 @@ import (
 	"github.com/heliowap/vpsdash/internal/auth"
 	"github.com/heliowap/vpsdash/internal/config"
 	"github.com/heliowap/vpsdash/internal/store"
+	"github.com/heliowap/vpsdash/internal/web"
 )
 
 type fakeGitHub struct{ updates []string }
@@ -111,5 +112,35 @@ func TestLoginRateLimitUsesHostWithoutEphemeralPort(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("attempt %d: status %d, want %d", i+1, w.Code, want)
 		}
+	}
+}
+
+func TestEmbeddedPWAAssets(t *testing.T) {
+	h := (&Server{Static: http.FS(web.Dist())}).Handler()
+	for _, tc := range []struct {
+		path, contentType, cacheControl string
+	}{
+		{"/", "text/html", "no-cache"},
+		{"/manifest.webmanifest", "application/manifest+json", "no-cache"},
+		{"/sw.js", "text/javascript", "no-cache"},
+		{"/icons/vpsdash-192.png", "image/png", ""},
+		{"/icons/vpsdash-512.png", "image/png", ""},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest("GET", tc.path, nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d", w.Code)
+			}
+			if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, tc.contentType) {
+				t.Fatalf("content type = %q", got)
+			}
+			if got := w.Header().Get("Cache-Control"); got != tc.cacheControl {
+				t.Fatalf("cache control = %q", got)
+			}
+			if tc.contentType == "image/png" && !bytes.HasPrefix(w.Body.Bytes(), []byte("\x89PNG\r\n\x1a\n")) {
+				t.Fatal("embedded icon is not a PNG")
+			}
+		})
 	}
 }

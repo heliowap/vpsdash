@@ -181,6 +181,12 @@ allmedical-mail:587` no próprio host e registrar o resultado aqui antes do
 primeiro alerta real. Sem essa coleta, alerts ficam enfileirados e o painel
 mostra o badge "canal de alerta não provisionado".
 
+Tentativa de coleta em 2026-09-26 no `intrador-tech-vps`: o dispositivo
+`allmedical-mail` apareceu online na tailnet, mas conexões SMTP sem
+autenticação às portas 587 e 465 expiraram após 8 s. Porta, TLS e mecanismos
+de auth continuam sem confirmação; verificar serviço e firewall no host de
+e-mail antes de criar a conta e ativar o canal.
+
 ## Isolamento (inalterado do conceito)
 
 Usuário `vpsdash` próprio; chaves SSH em `~vpsdash/.ssh` (ed25519 por host,

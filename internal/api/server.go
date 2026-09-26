@@ -453,5 +453,11 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(path, ".woff2") {
 		w.Header().Set("Content-Type", "font/woff2")
 	}
+	if strings.HasSuffix(path, ".webmanifest") {
+		w.Header().Set("Content-Type", "application/manifest+json")
+	}
+	if path == "index.html" || path == "sw.js" || strings.HasSuffix(path, ".webmanifest") {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 	_, _ = w.Write(data)
 }

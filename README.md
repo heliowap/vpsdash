@@ -19,6 +19,11 @@ O canal SMTP mostra "não provisionado" e mantém eventos pendentes enquanto
 attach ficam para `v0.2`, conforme a especificação. A interface não afirma
 que um host está saudável antes da primeira leitura.
 
+O painel pode ser instalado na tela inicial como PWA pelo navegador da
+tailnet. O service worker guarda somente a interface estática; chamadas
+`/api/` continuam na rede e nunca são servidas do cache. Sem conexão, o
+painel não apresenta uma leitura antiga como estado atual.
+
 ## Desenvolver
 
 Requer Go 1.27.1 e Node 22 para o build. Node não é usado pelo serviço.
@@ -137,6 +142,10 @@ O arquivo privado `/home/vpsdash/.config/vpsdash/smtp.env` aceita
 implícito na 465. Antes de provisionar, confirme porta, TLS, mecanismo de
 autenticação e crie `vpsdash@intrador.com.br` em `allmedical-mail`. Alertas
 pendentes permanecem na tabela `alerts` com `sent_at=0`.
+
+Em 2026-09-26, o peer apareceu online na tailnet, mas conexões às portas 587
+e 465 expiraram a partir do `intrador-tech-vps`. Verifique o serviço e o
+firewall no host de e-mail antes de configurar `smtp.env`.
 
 ## gh-agents
 
