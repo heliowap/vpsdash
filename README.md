@@ -170,6 +170,11 @@ privado para `127.0.0.1:8484` e verifique o domínio `*.ts.net` no navegador:
 sudo tailscale serve --bg 127.0.0.1:8484
 ```
 
+Se outro serviço já escutar na porta 443, use
+`sudo tailscale serve --https=8443 --bg 127.0.0.1:8484` e acesse
+`https://<nome-do-host>.<tailnet>.ts.net:8443/`. O assistente escolhe essa
+porta automaticamente e aguarda a emissão inicial do certificado HTTPS.
+
 Use **Serve**, não Funnel. O cookie de sessão exige HTTPS. A sintaxe de
 `tailscale serve` segue a [documentação oficial](https://tailscale.com/docs/reference/tailscale-cli/serve).
 

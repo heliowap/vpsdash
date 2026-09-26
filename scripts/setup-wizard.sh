@@ -201,7 +201,7 @@ if [[ "${SUDO_USER:-helio}" != helio ]]; then
 fi
 umask 077
 cd "$repo_dir"
-for required in python3 jq tailscale ssh-keyscan ssh-keygen curl; do
+for required in python3 jq tailscale ssh-keyscan ssh-keygen curl ss; do
   command -v "$required" >/dev/null || { echo "Comando ausente: $required" >&2; exit 1; }
 done
 operator_path="$PATH"
@@ -567,19 +567,55 @@ if tailscale serve status --json | jq -e '(.AllowFunnel // {}) | any(.[])' >/dev
   wizard_error 'Tailscale Funnel está ativo neste host; revise antes de publicar o painel.'
   exit 1
 fi
+self_dns="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
+panel_serve_port() {
+  tailscale serve status --json | jq -r --arg dns "$self_dns" '
+    [ . as $status
+      | (.Web // {}) | to_entries[]
+      | select(.key | startswith($dns + ":"))
+      | select(.value.Handlers["/"].Proxy == "http://127.0.0.1:8484")
+      | .key | split(":")[-1]
+      | select($status.TCP[.].HTTPS == true)
+    ] | .[0] // empty'
+}
 say "O serviço respondeu em loopback. Estado atual do Tailscale Serve:"
 tailscale serve status
-if tailscale serve status | grep -Fq '127.0.0.1:8484'; then
-  say "Serve já encaminha para a porta do painel."
+serve_port="$(panel_serve_port)"
+if [[ -n "$serve_port" ]]; then
+  say "Serve já encaminha HTTPS na porta $serve_port para o painel."
 elif confirm "Publicar o painel com Tailscale Serve HTTPS privado?"; then
-  tailscale serve --bg 127.0.0.1:8484
+  serve_port=443
+  if ss -Hlt '( sport = :443 )' | grep -q .; then
+    serve_port=8443
+    say "A porta 443 está ocupada; Serve usará a porta 8443."
+  fi
+  if ss -Hlt "( sport = :$serve_port )" | grep -q .; then
+    wizard_error "A porta $serve_port também está ocupada; libere-a antes de publicar o painel."
+    exit 1
+  fi
+  tailscale serve --https="$serve_port" --bg 127.0.0.1:8484
+  serve_port="$(panel_serve_port)"
+  if [[ -z "$serve_port" ]]; then
+    wizard_error 'Serve não registrou a rota HTTPS para o painel.'
+    exit 1
+  fi
 else
   pending "Tailscale Serve ainda não publica o painel."
 fi
-self_dns="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
-if tailscale serve status | grep -Fq '127.0.0.1:8484'; then
-  curl -fsS --max-time 15 "https://$self_dns/healthz" -o /dev/null
-  open_url "https://$self_dns"
+if [[ -n "$serve_port" ]]; then
+  panel_url="https://$self_dns"
+  if [[ "$serve_port" != 443 ]]; then
+    panel_url+=":$serve_port"
+  fi
+  say "Verificando $panel_url; o primeiro certificado pode levar alguns minutos."
+  for ((attempt=0; attempt<18; attempt++)); do
+    if curl -fsS --max-time 5 "$panel_url/healthz" -o /dev/null 2>/dev/null; then
+      break
+    fi
+    sleep 5
+  done
+  curl -fsS --max-time 15 "$panel_url/healthz" -o /dev/null
+  open_url "$panel_url"
   if ! confirm "Conseguiu entrar no painel pelo navegador da tailnet?"; then
     pending "Confirmar login no navegador da tailnet."
   fi
