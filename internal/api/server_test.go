@@ -134,6 +134,63 @@ func TestLoginRateLimitUsesHostWithoutEphemeralPort(t *testing.T) {
 	}
 }
 
+func TestLoginRateLimitSeparatesClientsBehindLocalProxy(t *testing.T) {
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := auth.New(hash, []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(config.Config{}, nil, nil, nil, a).Handler()
+	request := func(clientIP string) int {
+		r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"wrong"}`))
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("X-Real-IP", clientIP)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := 0; i < 5; i++ {
+		if got := request("198.51.100.10"); got != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status %d", i+1, got)
+		}
+	}
+	if got := request("198.51.100.10"); got != http.StatusTooManyRequests {
+		t.Fatalf("rate-limited client = %d", got)
+	}
+	if got := request("198.51.100.11"); got != http.StatusUnauthorized {
+		t.Fatalf("other client = %d", got)
+	}
+}
+
+func TestLoginRateLimitIgnoresUntrustedProxyHeader(t *testing.T) {
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := auth.New(hash, []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(config.Config{}, nil, nil, nil, a).Handler()
+	for i := 0; i < 6; i++ {
+		r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"wrong"}`))
+		r.RemoteAddr = "198.51.100.10:12345"
+		r.Header.Set("X-Real-IP", "203.0.113."+strconv.Itoa(i+1))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		want := http.StatusUnauthorized
+		if i == 5 {
+			want = http.StatusTooManyRequests
+		}
+		if w.Code != want {
+			t.Fatalf("attempt %d: status %d, want %d", i+1, w.Code, want)
+		}
+	}
+}
+
 func TestEmbeddedPWAAssets(t *testing.T) {
 	h := (&Server{Static: http.FS(web.Dist())}).Handler()
 	for _, tc := range []struct {

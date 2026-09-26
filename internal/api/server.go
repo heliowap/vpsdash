@@ -110,10 +110,7 @@ func (s *Server) tooManyLogins(ip string) bool {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(ip); err == nil {
-		ip = host
-	}
+	ip := loginClientIP(r)
 	if s.tooManyLogins(ip) {
 		errorResponse(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente em cinco minutos.")
 		return
@@ -141,6 +138,20 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"authenticated": true, "csrf": csrf})
+}
+
+func loginClientIP(r *http.Request) string {
+	ip := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
+	}
+	// The public Caddy proxy overwrites X-Real-IP before forwarding to loopback.
+	if remote := net.ParseIP(ip); remote != nil && remote.IsLoopback() {
+		if forwarded := net.ParseIP(r.Header.Get("X-Real-IP")); forwarded != nil {
+			return forwarded.String()
+		}
+	}
+	return ip
 }
 
 func (s *Server) authorize(next http.Handler) http.Handler {
