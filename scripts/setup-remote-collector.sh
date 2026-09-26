@@ -16,6 +16,8 @@ if [[ ! "$host_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ||
       ! "$remote_user" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ||
       ! "$expected_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]; then
   echo 'Uso: setup-remote-collector.sh <host-id> <usuario-ssh> <fingerprint-ed25519>' >&2
+  echo 'No console do host remoto: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256' >&2
+  echo 'Informe apenas o trecho que começa com SHA256:.' >&2
   exit 2
 fi
 if ! getent passwd vpsdash >/dev/null; then

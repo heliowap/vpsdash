@@ -346,13 +346,30 @@ for host_id in allmedical-app allmedical-mail intrador; do
     say "$host_id já está ativo no inventário."
     continue
   fi
-  step "No console de $host_id, rode: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256"
+  step "Abra o console de $host_id no provedor, ou uma sessão SSH já verificada."
+  step "Nesse host, rode: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256"
+  note "O valor procurado começa com SHA256:. Enter no campo abaixo pula este host."
   if ! confirm "Configurar a coleta SSH de $host_id agora?"; then
     pending "$host_id ficará com presença Tailscale até configurar a coleta SSH."
     continue
   fi
+  while true; do
+    ask HOST_FINGERPRINT "Fingerprint de $host_id (ou Enter para pular):"
+    if [[ -z "$HOST_FINGERPRINT" ]]; then
+      pending "$host_id ficará com presença Tailscale até obter o fingerprint no host remoto."
+      break
+    fi
+    if [[ "$HOST_FINGERPRINT" =~ SHA256:[A-Za-z0-9+/=]+ ]]; then
+      HOST_FINGERPRINT="${BASH_REMATCH[0]}"
+      break
+    fi
+    warn "Cole o trecho SHA256:... exibido pelo ssh-keygen no host remoto."
+  done
+  if [[ -z "$HOST_FINGERPRINT" ]]; then
+    unset HOST_FINGERPRINT
+    continue
+  fi
   ask REMOTE_USER "Usuário SSH de $host_id:"
-  ask HOST_FINGERPRINT "Fingerprint SHA256 mostrado no console remoto:"
   "$repo_dir/scripts/setup-remote-collector.sh" "$host_id" "$REMOTE_USER" "$HOST_FINGERPRINT"
   activate_remote "$host_id" "$REMOTE_USER"
   unset REMOTE_USER HOST_FINGERPRINT

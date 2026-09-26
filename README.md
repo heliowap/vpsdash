@@ -59,6 +59,11 @@ GitHub App, testa TLS e autenticação SMTP e publica o painel por Tailscale
 Serve. Ele preserva credenciais já existentes e pode ser executado de novo
 se alguma etapa ficar pendente. Para os hosts remotos, obtenha o fingerprint
 Ed25519 no console do próprio host antes de informá-lo ao assistente.
+Nesse console, execute
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256` e copie somente
+o trecho `SHA256:...` da saída. Se não tiver acesso ao console naquele momento,
+pressione Enter no campo do fingerprint para manter apenas a presença
+Tailscale desse host e avance; você poderá executar o assistente novamente.
 Endereços reais da tailnet, chaves e senhas ficam apenas na configuração
 privada da conta `vpsdash` ou nos GitHub Actions secrets.
 
