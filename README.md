@@ -44,6 +44,33 @@ encaminha `/api` para `127.0.0.1:8484`.
 
 ## Configuração do host
 
+### Assistente de instalação
+
+No terminal de `helio` na VPS, execute:
+
+```bash
+sudo scripts/setup-wizard.sh
+```
+
+O assistente compila e instala o serviço, pede a senha do painel sem eco,
+configura os coletores SSH locais e remotos, grava o secret
+`OPENCODE_API_KEY` no repositório, acompanha o registro e a instalação do
+GitHub App, testa TLS e autenticação SMTP e publica o painel por Tailscale
+Serve. Ele preserva credenciais já existentes e pode ser executado de novo
+se alguma etapa ficar pendente. Para os hosts remotos, obtenha o fingerprint
+Ed25519 no console do próprio host antes de informá-lo ao assistente.
+Endereços reais da tailnet, chaves e senhas ficam apenas na configuração
+privada da conta `vpsdash` ou nos GitHub Actions secrets.
+
+Se o terminal da VPS não tiver navegador, o assistente mostra o comando
+`scp` para copiar o formulário de registro do App para seu computador.
+Preencha-o no navegador local e cole no terminal apenas o código de uso
+único retornado pelo GitHub. Nunca envie senhas nem esse código no chat.
+Se o SMTP ainda estiver inacessível, o assistente indica a pendência e o
+painel mantém alertas na fila até a próxima execução.
+
+### Instalação manual
+
 Instale o serviço sob o usuário próprio `vpsdash`, separado de `helio` e
 `gh-agents`. O script cria o usuário e o linger, instala o binário e a unit,
 recarrega o gerenciador systemd do usuário e verifica o resultado. Ele não
@@ -71,7 +98,7 @@ sudo -iu vpsdash /home/vpsdash/bin/vpsdash init-auth
 ```
 
 O comando pede a senha no terminal e escreve `auth.env` com modo `0600`.
-Para o host local, instale a ponte SSH de leitura com o usuário `helio`:
+Para o host local, instale a ponte SSH de leitura como `helio` ou com `sudo`:
 
 ```bash
 scripts/setup-local-collector.sh
@@ -87,11 +114,18 @@ por host e autorize a chave pública correspondente com
 Confirme a host key Ed25519 de cada servidor fora da conexão antes de
 adicioná-la ao `known_hosts` de `vpsdash`; ajuste `ssh_user` e `ssh_key_file`
 no inventário.
+Para instalar e testar a ponte em um host remoto, use:
+
+```bash
+sudo scripts/setup-remote-collector.sh <host-id> <usuario-ssh> <fingerprint-SHA256>
+```
+
 O painel executa cada coleta com timeout de 10 s. Windows entra apenas pela
 presença Tailscale, sem SSH.
 
 Para monitorar as units do `gh-agents` no host local, configure uma segunda
-chave, exclusiva da conta da frota. Execute como `helio`; o script pede sudo,
+chave, exclusiva da conta da frota. Execute como `helio` ou com `sudo`; o
+script pede sudo quando necessário,
 instala a ponte SSH com autorização apenas para a leitura das units, confere
 a host key e testa uma coleta pela própria chave do `vpsdash`. Ele também
 deixa em `/tmp` uma amostra dos estados com os nomes dos runners ocultados,
@@ -154,10 +188,10 @@ volta ao repositório com `?code=...` na URL. Troque esse código de uso único
 em até uma hora, **sem imprimir a resposta**:
 
 ```bash
-scripts/convert-app-manifest.sh '<code>' /home/vpsdash/.config/vpsdash
+scripts/convert-app-manifest.sh
 ```
 
-O script verifica o acesso `sudo` antes de consumir o código, chama
+O script lê o código sem eco, verifica o acesso `sudo` antes da troca, chama
 `POST /app-manifests/{code}/conversions` e instala o PEM e o
 `github-app.env` como `vpsdash`, modo `0600`. Instale o App nos repositórios
 desejados, obtenha os IDs de instalação e edite `GITHUB_INSTALLATIONS_JSON`
