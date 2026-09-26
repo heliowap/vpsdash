@@ -204,13 +204,23 @@ cd "$repo_dir"
 for required in python3 jq tailscale ssh-keyscan ssh-keygen curl; do
   command -v "$required" >/dev/null || { echo "Comando ausente: $required" >&2; exit 1; }
 done
-run_as_operator() { runuser -u helio -- env -u GH_TOKEN -u GITHUB_TOKEN HOME=/home/helio "$@"; }
+operator_path="$PATH"
+run_as_operator() {
+  runuser -u helio -- env -u GH_TOKEN -u GITHUB_TOKEN \
+    HOME=/home/helio PATH="$operator_path" "$@"
+}
 run_as_service() { runuser -u vpsdash -- env HOME=/home/vpsdash "$@"; }
 go_bin="$(run_as_operator bash -lc 'command -v go' || true)"
 npm_bin="$(run_as_operator bash -lc 'command -v npm' || true)"
 gh_bin="$(run_as_operator bash -lc 'command -v gh' || true)"
-if [[ -z "$go_bin" || -z "$npm_bin" || -z "$gh_bin" ]]; then
-  echo 'Go, npm e gh precisam estar disponíveis para helio.' >&2
+node_bin="$(run_as_operator bash -lc 'command -v node' || true)"
+if [[ -z "$go_bin" || -z "$npm_bin" || -z "$gh_bin" || -z "$node_bin" ]]; then
+  echo 'Go, Node, npm e gh precisam estar disponíveis para helio.' >&2
+  exit 1
+fi
+operator_path="$(dirname -- "$node_bin"):$operator_path"
+if ! run_as_operator node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)'; then
+  echo 'O build requer Node 22.12 ou posterior; confira a instalação de helio.' >&2
   exit 1
 fi
 user_systemctl() {
