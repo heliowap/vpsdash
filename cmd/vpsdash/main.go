@@ -166,7 +166,12 @@ func serve(args []string) error {
 	return err
 }
 
-func loadGitHub(path string) (*githubapp.Client, error) {
+type githubAPI interface {
+	collect.FleetAPI
+	api.GitHub
+}
+
+func loadGitHub(path string) (githubAPI, error) {
 	vars, err := config.ReadEnvFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
