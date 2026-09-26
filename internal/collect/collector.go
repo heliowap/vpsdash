@@ -347,13 +347,13 @@ func (c *Collector) projectHealth(ctx context.Context, h config.Host, p store.Pr
 		return errors.New("no expected services configured")
 	}
 	for _, name := range names {
-		script, err := healthScript(p.Source, name)
+		output, err := c.Executor.Check(ctx, h, p.Source, name)
 		if err != nil {
-			return err
-		}
-		output, err := c.Executor.Run(ctx, h, script)
-		if err != nil {
-			return fmt.Errorf("%s: %s", name, strings.TrimSpace(output))
+			reason := strings.TrimSpace(output)
+			if reason == "" {
+				reason = err.Error()
+			}
+			return fmt.Errorf("%s: %s", name, reason)
 		}
 		if strings.TrimSpace(output) != "active" {
 			return fmt.Errorf("%s is %s", name, strings.TrimSpace(output))

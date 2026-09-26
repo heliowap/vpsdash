@@ -66,6 +66,7 @@ func (c Config) Validate() error {
 		return errors.New("listen must bind to loopback for tailscale serve")
 	}
 	seenHosts := map[string]bool{}
+	seenKeys := map[string]bool{}
 	for _, h := range c.Hosts {
 		if !safeName.MatchString(h.ID) || h.TailnetName == "" {
 			return fmt.Errorf("invalid host: %q", h.ID)
@@ -77,8 +78,17 @@ func (c Config) Validate() error {
 		if h.Kind != "vps" && h.Kind != "presence" {
 			return fmt.Errorf("invalid kind for host %s", h.ID)
 		}
-		if h.Kind == "vps" && !h.Local && h.SSHUser == "" {
-			return fmt.Errorf("host %s needs ssh_user", h.ID)
+		if h.Kind == "vps" && !h.Local {
+			if h.SSHUser == "" {
+				return fmt.Errorf("host %s needs ssh_user", h.ID)
+			}
+			if !filepath.IsAbs(h.SSHKeyFile) {
+				return fmt.Errorf("host %s needs an absolute ssh_key_file", h.ID)
+			}
+			if seenKeys[h.SSHKeyFile] {
+				return fmt.Errorf("SSH key is reused by host %s", h.ID)
+			}
+			seenKeys[h.SSHKeyFile] = true
 		}
 	}
 	seenRepos := map[string]bool{}

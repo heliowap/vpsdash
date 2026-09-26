@@ -26,7 +26,8 @@ painel não apresenta uma leitura antiga como estado atual.
 
 ## Desenvolver
 
-Requer Go 1.27.1 e Node 22 para o build. Node não é usado pelo serviço.
+Requer Go 1.27.1 e Node 22 para o build. Node não é usado pelo serviço. A
+ponte SSH de leitura requer Python 3 nos hosts Linux monitorados.
 
 ```bash
 cd web && npm ci && npm run build && cd ..
@@ -68,10 +69,24 @@ sudo -iu vpsdash /home/vpsdash/bin/vpsdash init-auth
 ```
 
 O comando pede a senha no terminal e escreve `auth.env` com modo `0600`.
-Adicione uma chave ed25519 própria em `~vpsdash/.ssh/`, autorize leitura SSH
-nos hosts Linux e confirme cada host key em `known_hosts`. O painel executa
-comandos de coleta com timeout de 10 s; a chave não deve permitir acesso aos
-arquivos de `gh-agents`. Windows entra pela presença Tailscale, sem SSH.
+Para o host local, instale a ponte SSH de leitura com o usuário `helio`:
+
+```bash
+scripts/setup-local-collector.sh
+```
+
+O script gera uma chave Ed25519 exclusiva deste host, autoriza somente os
+comandos de métricas, descoberta, sessões e health em `helio`, confere a host
+key local e testa uma leitura real. Ele pode ser executado novamente sem
+duplicar a autorização. Para outros hosts Linux, instale
+`scripts/ssh-readonly.py` na conta SSH remota, gere uma chave Ed25519 diferente
+por host e autorize a chave pública correspondente com
+`restrict,command="/usr/bin/python3 -I /caminho/ssh-readonly.py"`.
+Confirme a host key Ed25519 de cada servidor fora da conexão antes de
+adicioná-la ao `known_hosts` de `vpsdash`; ajuste `ssh_user` e `ssh_key_file`
+no inventário.
+O painel executa cada coleta com timeout de 10 s. Windows entra apenas pela
+presença Tailscale, sem SSH.
 
 Inicie o serviço:
 

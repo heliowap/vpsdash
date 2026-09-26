@@ -3,6 +3,7 @@ package collect
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -42,6 +43,37 @@ func (e *Executor) Run(ctx context.Context, host config.Host, script string) (st
 		output, err := cmd.CombinedOutput()
 		return string(output), err
 	}
+	return e.runRemote(ctx, host, "sh -s", script)
+}
+
+func (e *Executor) Check(ctx context.Context, host config.Host, source, name string) (string, error) {
+	if host.Local {
+		script, err := healthScript(source, name)
+		if err != nil {
+			return "", err
+		}
+		return e.Run(ctx, host, script)
+	}
+	command, err := healthCommand(source, name)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return e.runRemote(ctx, host, command, "")
+}
+
+func healthCommand(source, name string) (string, error) {
+	if source != "systemd" && source != "docker" && source != "tmux" {
+		return "", errors.New("unsupported project source")
+	}
+	if name == "" || len(name) > 256 || strings.ContainsAny(name, "\x00\r\n") {
+		return "", errors.New("invalid project name")
+	}
+	return "vpsdash-health " + source + " " + base64.RawURLEncoding.EncodeToString([]byte(name)), nil
+}
+
+func (e *Executor) runRemote(ctx context.Context, host config.Host, command, input string) (string, error) {
 	client, err := e.client(host)
 	if err != nil {
 		return "", err
@@ -52,12 +84,12 @@ func (e *Executor) Run(ctx context.Context, host config.Host, script string) (st
 		return "", err
 	}
 	defer session.Close()
-	session.Stdin = strings.NewReader(script)
+	session.Stdin = strings.NewReader(input)
 	var output bytes.Buffer
 	session.Stdout = &output
 	session.Stderr = &output
 	done := make(chan error, 1)
-	go func() { done <- session.Run("sh -s") }()
+	go func() { done <- session.Run(command) }()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -80,8 +112,7 @@ func (e *Executor) client(host config.Host) (*ssh.Client, error) {
 	e.mu.Unlock()
 	keyFile := host.SSHKeyFile
 	if keyFile == "" {
-		home, _ := os.UserHomeDir()
-		keyFile = filepath.Join(home, ".ssh", "id_ed25519")
+		return nil, errors.New("ssh_key_file is required")
 	}
 	keyBytes, err := os.ReadFile(keyFile)
 	if err != nil {
@@ -99,7 +130,7 @@ func (e *Executor) client(host config.Host) (*ssh.Client, error) {
 	if host.SSHUser == "" {
 		return nil, errors.New("ssh_user is required")
 	}
-	sshConfig := &ssh.ClientConfig{User: host.SSHUser, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: known, Timeout: 10 * time.Second}
+	sshConfig := &ssh.ClientConfig{User: host.SSHUser, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: known, HostKeyAlgorithms: []string{ssh.KeyAlgoED25519}, Timeout: 10 * time.Second}
 	address := strings.TrimSuffix(host.TailnetName, ".") + ":22"
 	client, err := ssh.Dial("tcp", address, sshConfig)
 	if err != nil {

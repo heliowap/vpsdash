@@ -2,10 +2,10 @@
   "listen": "127.0.0.1:8484",
   "database": "/home/vpsdash/vpsdash.db",
   "hosts": [
-    { "id": "intrador-tech-vps", "tailnet_name": "intrador-tech-vps.tailnet.ts.net", "kind": "vps", "ssh_user": "helio" },
-    { "id": "allmedical-app", "tailnet_name": "allmedical-app.tailnet.ts.net", "kind": "vps", "ssh_user": "operator" },
-    { "id": "allmedical-mail", "tailnet_name": "allmedical-mail.tailnet.ts.net", "kind": "vps", "ssh_user": "operator" },
-    { "id": "intrador", "tailnet_name": "intrador.tailnet.ts.net", "kind": "vps", "ssh_user": "operator" }
+    { "id": "intrador-tech-vps", "tailnet_name": "intrador-tech-vps.tailnet.ts.net", "kind": "vps", "ssh_user": "helio", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador-tech-vps" },
+    { "id": "allmedical-app", "tailnet_name": "allmedical-app.tailnet.ts.net", "kind": "vps", "ssh_user": "operator", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_allmedical-app" },
+    { "id": "allmedical-mail", "tailnet_name": "allmedical-mail.tailnet.ts.net", "kind": "vps", "ssh_user": "operator", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_allmedical-mail" },
+    { "id": "intrador", "tailnet_name": "intrador.tailnet.ts.net", "kind": "vps", "ssh_user": "operator", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador" }
   ],
   "repositories": [
     { "name": "heliowap/vpsdash", "agent_switchable": true, "ci_switchable": true, "runner_host_id": "intrador-tech-vps" }

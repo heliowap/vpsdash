@@ -31,6 +31,34 @@ func TestLoadRejectsPublicBind(t *testing.T) {
 	}
 }
 
+func TestLoadRequiresDistinctKeysForRemoteHosts(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	for _, tc := range []struct {
+		name, data string
+		valid      bool
+	}{
+		{"missing key", `{"hosts":[{"id":"a","tailnet_name":"a.example.ts.net","kind":"vps","ssh_user":"operator"}]}`, false},
+		{"reused key", `{"hosts":[{"id":"a","tailnet_name":"a.example.ts.net","kind":"vps","ssh_user":"operator","ssh_key_file":"/keys/shared"},{"id":"b","tailnet_name":"b.example.ts.net","kind":"vps","ssh_user":"operator","ssh_key_file":"/keys/shared"}]}`, false},
+		{"separate keys", `{"hosts":[{"id":"a","tailnet_name":"a.example.ts.net","kind":"vps","ssh_user":"operator","ssh_key_file":"/keys/a"},{"id":"b","tailnet_name":"b.example.ts.net","kind":"vps","ssh_user":"operator","ssh_key_file":"/keys/b"}]}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(file, []byte(tc.data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(file)
+			if (err == nil) != tc.valid {
+				t.Fatalf("config valid = %t, error = %v", tc.valid, err)
+			}
+		})
+	}
+}
+
+func TestExampleInventoryIsValid(t *testing.T) {
+	if _, err := Load(filepath.Join("..", "..", "config.example.json")); err != nil {
+		t.Fatalf("example inventory: %v", err)
+	}
+}
+
 func TestReadEnvFileRequiresPrivatePermissions(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "auth.env")
 	if err := os.WriteFile(file, []byte("VPSDASH_SESSION_KEY=abc\n"), 0644); err != nil {

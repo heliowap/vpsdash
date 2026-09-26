@@ -10,9 +10,10 @@ web
 
 Confirmed by spec (`docs/specs/2026-09-24-vps-dashboard-design.md`): single Go
 binary serving API + embedded React/Vite SPA (`embed.FS`), SQLite local store,
-and `x/crypto/ssh` pool. The terminal bridge is a later phase. No Node in
-production. The service binds to loopback; `tailscale serve` provides private
-HTTPS access.
+and `x/crypto/ssh` pool. Collector SSH keys are unique per host and limited
+by a Python 3 forced command that accepts only read operations. The terminal
+bridge is a later phase. No Node in production. The service binds to loopback;
+`tailscale serve` provides private HTTPS access.
 
 ## Users
 
