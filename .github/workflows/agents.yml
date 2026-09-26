@@ -67,9 +67,11 @@ jobs:
     #     OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
     #     FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
     secrets: inherit
-    # with:
-    #   runs-on: self-hosted        # default; vars.AGENT_RUNNER overrides per repo
-    #   model: opencode-go/glm-5.3-flash
-    #   model_fallbacks: 'a/1,b/2'  # probed in order; first responding model wins
-    #   use_container: true         # false = run on host (tests needing Docker)
-    #   ci_workflows: 'ci,qe'       # empty = all; widen `workflows:` above to match
+    # OpenCode Go can exhaust its balance; keep review available through a
+    # zero-retention model while retaining the paid model as the first choice.
+    with:
+      model_fallbacks: opencode/space-bunny-free
+      # runs-on: self-hosted        # default; vars.AGENT_RUNNER overrides per repo
+      # model: opencode-go/glm-5.3-flash
+      # use_container: true         # false = run on host (tests needing Docker)
+      # ci_workflows: 'ci,qe'       # empty = all; widen `workflows:` above to match
