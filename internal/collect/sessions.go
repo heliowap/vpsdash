@@ -93,7 +93,7 @@ func detectAgent(command, args string) string {
 		return "opencode"
 	case command == "codex" || strings.Contains(args, "codex exec") || strings.Contains(args, "codex resume") || strings.Contains(args, "codex app-server"):
 		return "codex"
-	case command == "claude" || strings.Contains(args, "@anthropic-ai/claude-code") || strings.Contains(args, "claude-code/cli"):
+	case command == "claude" || (command == "node" && strings.Contains(args, "claude")) || strings.Contains(args, "@anthropic-ai/claude-code") || strings.Contains(args, "claude-code/cli"):
 		return "claude"
 	default:
 		return ""

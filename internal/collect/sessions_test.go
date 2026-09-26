@@ -23,6 +23,17 @@ func TestParseSessionsDetectsAgentInChildProcess(t *testing.T) {
 	}
 }
 
+func TestParseSessionsDetectsClaudeNodeEntrypoint(t *testing.T) {
+	raw := "work\t100\tbash\t/home/helio/project\n--PROCESSES--\n100 1 bash bash\n101 100 node node /usr/local/bin/claude\n"
+	sessions, err := ParseSessions(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].Agent != "claude" {
+		t.Fatalf("agent = %+v", sessions)
+	}
+}
+
 func TestParseSessionsKeepsAgentWhenSessionHasAnotherShellPane(t *testing.T) {
 	raw := "work\t100\tbash\t/home/helio/project\nwork\t200\tbash\t/home/helio\n--PROCESSES--\n100 1 bash bash\n101 100 codex codex exec\n200 1 bash bash\n"
 	sessions, err := ParseSessions(raw)
