@@ -11,6 +11,7 @@ Restart=on-failure
 RestartSec=5
 UMask=0077
 NoNewPrivileges=yes
+Environment=PATH=/home/vpsdash/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 [Install]
 WantedBy=default.target

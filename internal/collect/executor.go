@@ -1,7 +1,6 @@
 package collect
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -85,21 +84,25 @@ func (e *Executor) runRemote(ctx context.Context, host config.Host, command, inp
 	}
 	defer session.Close()
 	session.Stdin = strings.NewReader(input)
-	var output bytes.Buffer
-	session.Stdout = &output
-	session.Stderr = &output
-	done := make(chan error, 1)
-	go func() { done <- session.Run(command) }()
+	type result struct {
+		output []byte
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		output, err := session.CombinedOutput(command)
+		done <- result{output, err}
+	}()
 	select {
-	case err := <-done:
-		if err != nil {
-			return output.String(), fmt.Errorf("ssh %s: %w", host.ID, err)
+	case result := <-done:
+		if result.err != nil {
+			return string(result.output), fmt.Errorf("ssh %s: %w", host.ID, result.err)
 		}
-		return output.String(), nil
+		return string(result.output), nil
 	case <-ctx.Done():
 		_ = session.Close()
 		e.invalidate(host.ID)
-		return output.String(), ctx.Err()
+		return "", ctx.Err()
 	}
 }
 
