@@ -86,4 +86,11 @@ if ! printf '%s\n' "$snapshot" | awk -F '\t' '$1 == "gh-agents-cleanup.timer" &&
   echo 'A leitura SSH não retornou o timer de limpeza.' >&2
   exit 1
 fi
+fixture_path="$(mktemp /tmp/vpsdash-runner-units.XXXXXX)"
+if ! printf '%s\n' "$snapshot" | awk -f "$repo_dir/scripts/sanitize-runner-units.awk" > "$fixture_path"; then
+  rm -f "$fixture_path"
+  echo 'A leitura das units contém uma linha inesperada.' >&2
+  exit 1
+fi
 echo "Coleta restrita das units gh-agents verificada em $tailnet_name."
+echo "Amostra com nomes ocultados para o teste: $fixture_path"

@@ -93,7 +93,11 @@ presença Tailscale, sem SSH.
 Para monitorar as units do `gh-agents` no host local, configure uma segunda
 chave, exclusiva da conta da frota. Execute como `helio`; o script pede sudo,
 instala a ponte SSH com autorização apenas para a leitura das units, confere
-a host key e testa uma coleta pela própria chave do `vpsdash`:
+a host key e testa uma coleta pela própria chave do `vpsdash`. Ele também
+deixa em `/tmp` uma amostra dos estados com os nomes dos runners ocultados,
+para substituir `internal/collect/testdata/runner_units.txt` após a primeira
+instalação. Use o caminho impresso pelo script e rode `go test ./internal/collect`
+depois da substituição:
 
 ```bash
 scripts/setup-runner-collector.sh

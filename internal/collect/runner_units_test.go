@@ -3,7 +3,9 @@ package collect
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,8 +22,16 @@ func TestParseRunnerUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(units) != 3 || !units["gh-agents-cleanup.timer"].Healthy() || units["actions.runner.owner-repo.owner--repo-2.service"].Healthy() {
+	if len(units) == 0 || units["gh-agents-cleanup.timer"].Name == "" {
 		t.Fatalf("parsed runner units = %+v", units)
+	}
+	for name, unit := range units {
+		if unit.Name != name || unit.LoadState == "" || unit.ActiveState == "" {
+			t.Fatalf("invalid parsed unit: %+v", unit)
+		}
+	}
+	if !(RunnerUnit{LoadState: "loaded", ActiveState: "active"}).Healthy() || (RunnerUnit{LoadState: "loaded", ActiveState: "failed"}).Healthy() {
+		t.Fatal("runner unit health classification is incorrect")
 	}
 	for _, malformed := range []string{
 		"gh-agents-cleanup.timer\tloaded\n",
@@ -32,6 +42,27 @@ func TestParseRunnerUnits(t *testing.T) {
 		if _, err := ParseRunnerUnits(malformed); err == nil {
 			t.Fatalf("accepted malformed snapshot %q", malformed)
 		}
+	}
+}
+
+func TestRunnerUnitFixtureSanitizer(t *testing.T) {
+	raw := "actions.runner.private-repo.owner--repo-1.service\tloaded\tactive\ngh-agents-cleanup.timer\tloaded\tactive\n"
+	cmd := exec.Command("awk", "-f", filepath.Join("..", "..", "scripts", "sanitize-runner-units.awk"))
+	cmd.Stdin = strings.NewReader(raw)
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(output), "private-repo") || !strings.Contains(string(output), "actions.runner.captured-1.service\tloaded\tactive") {
+		t.Fatalf("sanitized fixture = %q", output)
+	}
+	if _, err := ParseRunnerUnits(string(output)); err != nil {
+		t.Fatalf("sanitized fixture did not parse: %v", err)
+	}
+	cmd = exec.Command("awk", "-f", filepath.Join("..", "..", "scripts", "sanitize-runner-units.awk"))
+	cmd.Stdin = strings.NewReader(raw + "unexpected.service\tloaded\tactive\n")
+	if _, err := cmd.Output(); err == nil {
+		t.Fatal("sanitizer accepted an unexpected unit name")
 	}
 }
 
