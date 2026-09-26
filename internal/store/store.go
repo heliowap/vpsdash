@@ -292,23 +292,35 @@ func (s *Store) ConsecutiveFailures(ctx context.Context, id int64) (int, error) 
 	return count, rows.Err()
 }
 
-func (s *Store) Prune(ctx context.Context, now time.Time) error {
+type pruneQuery struct {
+	sql    string
+	cutoff int64
+}
+
+func (s *Store) PruneCurrent(ctx context.Context, now time.Time) error {
+	cutoff := now.Add(-10 * time.Minute).Unix()
+	return s.prune(ctx, []pruneQuery{
+		{`DELETE FROM tmux_sessions WHERE seen_at < ?`, cutoff},
+		{`DELETE FROM runners WHERE seen_at < ?`, cutoff},
+	})
+}
+
+func (s *Store) PruneHistory(ctx context.Context, now time.Time) error {
+	return s.prune(ctx, []pruneQuery{
+		{`DELETE FROM metrics WHERE ts < ?`, now.Add(-30 * 24 * time.Hour).Unix()},
+		{`DELETE FROM checks WHERE ts < ?`, now.Add(-30 * 24 * time.Hour).Unix()},
+		{`DELETE FROM alerts WHERE sent_at > 0 AND sent_at < ?`, now.Add(-90 * 24 * time.Hour).Unix()},
+	})
+}
+
+func (s *Store) prune(ctx context.Context, queries []pruneQuery) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	for _, query := range []struct {
-		sql string
-		arg int64
-	}{
-		{`DELETE FROM metrics WHERE ts < ?`, now.Add(-30 * 24 * time.Hour).Unix()},
-		{`DELETE FROM checks WHERE ts < ?`, now.Add(-30 * 24 * time.Hour).Unix()},
-		{`DELETE FROM tmux_sessions WHERE seen_at < ?`, now.Add(-10 * time.Minute).Unix()},
-		{`DELETE FROM runners WHERE seen_at < ?`, now.Add(-10 * time.Minute).Unix()},
-		{`DELETE FROM alerts WHERE sent_at > 0 AND sent_at < ?`, now.Add(-90 * 24 * time.Hour).Unix()},
-	} {
-		if _, err := tx.ExecContext(ctx, query.sql, query.arg); err != nil {
+	for _, query := range queries {
+		if _, err := tx.ExecContext(ctx, query.sql, query.cutoff); err != nil {
 			return err
 		}
 	}

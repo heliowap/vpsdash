@@ -10,13 +10,28 @@ func TestCurrentStateExpiresButUnsentAlertPersists(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	at := time.Unix(100, 0)
+	if err := s.UpsertHost(ctx, Host{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.UpsertRunner(ctx, Runner{Repo: "heliowap/vpsdash", ID: 7, Name: "agent-1", Status: "online", Busy: true, Job: "review"}, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertSession(ctx, Session{HostID: "vps", Name: "work", PanePID: 42}, at); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.QueueAlert(ctx, "runner_offline", "agent-1", "runner offline"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Prune(ctx, at.Add(11*time.Minute)); err != nil {
+	if err := s.PruneCurrent(ctx, at.Add(9*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if runners, err := s.Runners(ctx); err != nil || len(runners) != 1 {
+		t.Fatalf("recent runners = %+v, %v", runners, err)
+	}
+	if sessions, err := s.Sessions(ctx); err != nil || len(sessions) != 1 {
+		t.Fatalf("recent sessions = %+v, %v", sessions, err)
+	}
+	if err := s.PruneCurrent(ctx, at.Add(11*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	runners, err := s.Runners(ctx)
@@ -25,6 +40,10 @@ func TestCurrentStateExpiresButUnsentAlertPersists(t *testing.T) {
 	}
 	if len(runners) != 0 {
 		t.Fatalf("stale runners = %+v", runners)
+	}
+	sessions, err := s.Sessions(ctx)
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("stale sessions = %+v, %v", sessions, err)
 	}
 	alerts, err := s.PendingAlerts(ctx)
 	if err != nil || len(alerts) != 1 {

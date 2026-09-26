@@ -496,13 +496,20 @@ func (c *Collector) maintenanceLoop(ctx context.Context) {
 	for {
 		now := time.Now()
 		date := now.Format("2006-01-02")
+		c.setError("prune-current", c.Store.PruneCurrent(ctx, now))
 		if now.Hour() == 3 && now.Minute() >= 0 && lastPrune != date {
-			c.setError("prune", c.Store.Prune(ctx, now))
-			lastPrune = date
+			err := c.Store.PruneHistory(ctx, now)
+			c.setError("prune-history", err)
+			if err == nil {
+				lastPrune = date
+			}
 		}
 		if now.Weekday() == time.Sunday && now.Hour() == 3 && now.Minute() >= 30 && lastVacuum != date {
-			c.setError("vacuum", c.Store.Vacuum(ctx))
-			lastVacuum = date
+			err := c.Store.Vacuum(ctx)
+			c.setError("vacuum", err)
+			if err == nil {
+				lastVacuum = date
+			}
 		}
 		select {
 		case <-ctx.Done():

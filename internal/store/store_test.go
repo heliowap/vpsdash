@@ -69,7 +69,7 @@ func TestHostMetricsAndRetention(t *testing.T) {
 	if len(hosts) != 1 || hosts[0].Latest == nil || hosts[0].Latest.CPU == nil || *hosts[0].Latest.CPU != 30 {
 		t.Fatalf("hosts = %+v", hosts)
 	}
-	if err := s.Prune(ctx, time.Unix(100+31*86400, 0)); err != nil {
+	if err := s.PruneHistory(ctx, time.Unix(100+31*86400, 0)); err != nil {
 		t.Fatal(err)
 	}
 	points, err := s.MetricHistory(ctx, "vps", 0, time.Unix(100+31*86400, 0).Unix())
