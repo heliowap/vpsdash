@@ -118,6 +118,7 @@ function Overview({ data, histories, refreshFailed }: { data: Dashboard; histori
   const observedAt = Math.max(0, data.fleet_seen_at, ...data.hosts.map(host => host.seen_at || 0), ...data.projects.map(project => project.checked_at || 0), ...data.sessions.map(session => session.seen_at || 0))
   const observed = observedAt > 0
   const stale = refreshFailed || (observed && Date.now() / 1000 - observedAt > 120)
+  const fleetCurrent = !refreshFailed && data.fleet_seen_at > 0 && Date.now() / 1000 - data.fleet_seen_at <= 120 && !Object.keys(data.collector_errors).some(scope => scope.startsWith('github:'))
   return <>
     <section className={`situation ${problems.length ? 'situation-attention' : ''}`} aria-labelledby="situation-title">
       <div className="situation-top"><span className={`live-mark ${stale ? 'is-stale' : ''}`}><span /> {stale ? 'LEITURA DESATUALIZADA' : 'ESTADO OBSERVADO'}</span><time>Última leitura {observationTime(observedAt)}</time></div>
@@ -128,7 +129,7 @@ function Overview({ data, histories, refreshFailed }: { data: Dashboard; histori
     </section>
     <HostLedger hosts={data.hosts} histories={histories} />
     <section className="ledger-section overview-tail" aria-labelledby="activity-heading"><div className="section-heading"><div><h2 id="activity-heading">Em andamento</h2><p>Atividade recente da frota e das sessões.</p></div></div>
-      <div className="activity-grid"><div><span className="activity-number">{data.fleet_seen_at ? data.runners.filter(runner => runner.busy).length : '—'}</span><span>runners ocupados</span></div><div><span className="activity-number">{data.fleet_seen_at ? Object.values(data.queued).flat().length : '—'}</span><span>jobs na fila</span></div><div><span className="activity-number">{data.sessions.length}</span><span>sessões tmux</span></div></div>
+      <div className="activity-grid"><div><span className="activity-number">{fleetCurrent ? data.runners.filter(runner => runner.busy).length : '—'}</span><span>runners ocupados</span></div><div><span className="activity-number">{fleetCurrent ? Object.values(data.queued).flat().length : '—'}</span><span>jobs na fila</span></div><div><span className="activity-number">{data.sessions.length}</span><span>sessões tmux</span></div></div>
     </section>
   </>
 }
@@ -219,7 +220,7 @@ function switchOutcome(results: Record<string, string>): Notice {
   return { kind: failed.length ? 'error' : 'success', message: failed.length ? `Atualizações concluídas: ${updated}. Falharam: ${failed.join(', ')}.` : `Atualizações concluídas: ${updated}.` }
 }
 
-function Fleet({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; onRefresh: () => void }) {
+function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf: string; onRefresh: () => void; refreshFailed: boolean }) {
   const [presetPending, setPresetPending] = useState('')
   const [bulkVariable, setBulkVariable] = useState<SwitchVariable>('AGENT_RUNNER')
   const [bulkLabel, setBulkLabel] = useState('ubuntu-latest')
@@ -231,6 +232,8 @@ function Fleet({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; onRef
   const hasOperations = data.repositories.some(repo => !repo.error && (repo.agent_switchable || repo.ci_switchable))
   const fleetObserved = data.fleet_seen_at > 0
   const fleetErrors = Object.keys(data.collector_errors).some(scope => scope.startsWith('github:'))
+  const fleetStale = fleetObserved && Date.now() / 1000 - data.fleet_seen_at > 120
+  const fleetUncertain = refreshFailed || fleetErrors || fleetStale
   const bulkTargets: SwitchTarget[] = selectable.filter(repo => selected.includes(repo.name)).map(repo => ({ repo: repo.name, variable: bulkVariable, current: bulkVariable === 'AGENT_RUNNER' ? repo.agent_runner : repo.ci_runner, currentKnown: true }))
   const presetTargets: SwitchTarget[] = data.repositories.flatMap(repo => ([
     ...(repo.agent_switchable ? [{ repo: repo.name, variable: 'AGENT_RUNNER' as const, current: repo.agent_runner, currentKnown: !repo.error }] : []),
@@ -252,10 +255,10 @@ function Fleet({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; onRef
     finally { setBusy(false); setBulkPending(false) }
   }
   return <div className="page-body"><div className="page-title"><h1>Frota</h1><p>Runners, fila e backends operados pelas variáveis que os workflows já leem.</p></div>
-    {!data.repositories.length ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">Adicione repositórios ao inventário para iniciar a leitura de runners e fila.</div></section> : !fleetObserved ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">Aguardando a primeira leitura do GitHub App. Runners e fila ainda são desconhecidos.</div></section> : <>
-      {fleetErrors && <p className="notice notice-error" role="alert"><AlertCircle size={18} />Leitura parcial da frota. Confira a integração dos repositórios abaixo.</p>}
-      <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{data.runners.length} {data.runners.length === 1 ? 'registrado' : 'registrados'}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetErrors ? 'Nenhum runner na leitura parcial.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
-      <section className="ledger-section"><div className="section-heading"><h2>Fila</h2><span className="section-count">{queue.length} {queue.length === 1 ? 'job' : 'jobs'}</span></div>{queue.length ? <div className="ruled-list">{queue.map(run => <a className="queue-row" key={`${run.repo}-${run.id}`} href={run.html_url} target="_blank" rel="noreferrer"><Clock3 size={18} /><span><strong>{run.display_title || run.name}</strong><small>{run.repo}</small></span><ArrowUpRight size={17} /></a>)}</div> : <div className="empty-line">{fleetErrors ? 'Nenhum job na leitura parcial.' : 'Nenhum job aguardando runner.'}</div>}</section>
+    {!data.repositories.length ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">Adicione repositórios ao inventário para iniciar a leitura de runners e fila.</div></section> : !fleetObserved ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">{fleetErrors ? 'GitHub App indisponível. Runners e fila ainda são desconhecidos.' : 'Aguardando a primeira leitura do GitHub App. Runners e fila ainda são desconhecidos.'}</div></section> : <>
+      {fleetUncertain && <p className="notice notice-error" role="alert"><AlertCircle size={18} />Leitura da frota parcial ou desatualizada. Confirme o estado antes de agir.</p>}
+      <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
+      <section className="ledger-section"><div className="section-heading"><h2>Fila</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}`}</span></div>{queue.length ? <div className="ruled-list">{queue.map(run => <a className="queue-row" key={`${run.repo}-${run.id}`} href={run.html_url} target="_blank" rel="noreferrer"><Clock3 size={18} /><span><strong>{run.display_title || run.name}</strong><small>{run.repo}</small></span><ArrowUpRight size={17} /></a>)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual da fila não está disponível.' : 'Nenhum job aguardando runner.'}</div>}</section>
     </>}
     <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className="state-stamp stamp-bad">{repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
     {hasOperations && <>
@@ -290,8 +293,9 @@ function Fleet({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; onRef
   </div>
 }
 
-function RunnerRow({ runner }: { runner: Runner }) {
-  return <div className="runner-row"><span className={`status-dot ${runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {runner.job || (runner.busy ? 'Ocupado' : runner.status === 'online' ? 'Livre' : 'Offline')}</small></div><span className={`state-stamp ${runner.status === 'offline' ? 'stamp-bad' : ''}`}>{runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
+function RunnerRow({ runner, uncertain }: { runner: Runner; uncertain: boolean }) {
+  const lastState = runner.job || (runner.busy ? 'Ocupado' : runner.status === 'online' ? 'Livre' : 'Offline')
+  return <div className="runner-row"><span className={`status-dot ${uncertain ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
 }
 
 function Sessions({ data }: { data: Dashboard }) {
@@ -338,7 +342,7 @@ export default function App() {
     <div className="main-wrap"><header className="top-bar"><div className="mobile-brand"><Activity size={19} strokeWidth={2.5} /><strong>vpsdash</strong></div><div className="top-context"><span className="top-context-title">Central de comando</span><span className="top-context-sub">Observação em tempo real</span></div><div className="top-actions"><button className={`icon-button ${refreshing ? 'is-spinning' : ''}`} type="button" onClick={() => void refresh()} aria-label="Atualizar dados" title="Atualizar dados"><RefreshCw size={19} /></button><button className="icon-button" type="button" onClick={() => void logout()} aria-label="Sair" title="Sair"><LogOut size={19} /></button></div></header>
       <main className="content"><div className="content-inner">
         {notice && <div className={`notice notice-${notice.kind}`} role="alert"><AlertCircle size={18} />{notice.message}</div>}
-        {data ? tab === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} /> : tab === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : tab === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : <Sessions data={data} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
+        {data ? tab === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} /> : tab === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : tab === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : <Sessions data={data} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
         {data && !data.smtp_provisioned && tab !== 'overview' && <div className="service-note"><AlertCircle size={16} /><span>Canal de alerta por e-mail não provisionado. Eventos ficam enfileirados.</span></div>}
       </div></main>
     </div>

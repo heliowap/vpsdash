@@ -118,6 +118,7 @@ input::placeholder { color: #6b7470; }
 .row-copy small, .runner-row small, .session-row small, .queue-row small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .state-stamp { padding: 5px 8px; border-radius: 4px; color: var(--healthy); background: #e0ebe4; white-space: nowrap; letter-spacing: .03em; }
 .state-stamp.stamp-bad { color: var(--attention); background: #f4e4dc; }
+.state-stamp.stamp-unknown { color: var(--muted); background: #e8e9e5; }
 .project-row { border-bottom: 1px solid var(--rule); }
 .project-row .row-main > svg { color: var(--muted); flex: none; }
 .inline-editor { background: #ecefe9; padding: 18px 20px 20px; margin-bottom: 13px; display: grid; gap: 17px; border-radius: 8px; }

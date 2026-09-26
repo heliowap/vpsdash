@@ -12,13 +12,34 @@ import (
 	"github.com/heliowap/vpsdash/internal/store"
 )
 
-type fleetProbe struct{ fail bool }
+type fleetProbe struct {
+	fail    bool
+	runners []githubapp.Runner
+}
 
 func (f *fleetProbe) Runners(context.Context, string) ([]githubapp.Runner, error) {
 	if f.fail {
 		return nil, errors.New("GitHub unavailable")
 	}
-	return []githubapp.Runner{}, nil
+	return f.runners, nil
+}
+
+func TestFleetStoreErrorRemainsVisibleAfterQueueRead(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "vpsdash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	probe := &fleetProbe{runners: []githubapp.Runner{{ID: 1, Name: "runner-1", Status: "online"}}}
+	c := New(config.Config{Repositories: []config.Repository{{Name: "heliowap/vpsdash"}}}, s, probe)
+	defer c.Close()
+	c.pollFleet(context.Background())
+	_, errs, _ := c.Snapshot()
+	if errs["github:heliowap/vpsdash"] == "" {
+		t.Fatal("runner storage failure was cleared after successful queue read")
+	}
 }
 func (f *fleetProbe) Runs(context.Context, string, string) ([]githubapp.WorkflowRun, error) {
 	return []githubapp.WorkflowRun{}, nil

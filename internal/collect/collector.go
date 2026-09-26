@@ -479,12 +479,13 @@ func (c *Collector) pollFleet(ctx context.Context) bool {
 				}
 			}
 		}
+		var storeErr error
 		for _, r := range runners {
 			if r.Busy {
 				busy = true
 			}
 			if err := c.Store.UpsertRunner(ctx, store.Runner{Repo: repo.Name, ID: r.ID, Name: r.Name, Status: r.Status, Busy: r.Busy, Job: jobs[r.Name]}, time.Now()); err != nil {
-				c.setError("github:"+repo.Name, err)
+				storeErr = err
 			}
 		}
 		runs, err := c.GitHub.Runs(ctx, repo.Name, "queued")
@@ -493,7 +494,7 @@ func (c *Collector) pollFleet(ctx context.Context) bool {
 			continue
 		}
 		queued[repo.Name] = runs
-		c.setError("github:"+repo.Name, nil)
+		c.setError("github:"+repo.Name, storeErr)
 	}
 	c.mu.Lock()
 	c.queued = queued
