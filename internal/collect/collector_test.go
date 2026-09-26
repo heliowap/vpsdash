@@ -185,3 +185,19 @@ func TestUnavailableProjectProbeDoesNotQueueDownAlert(t *testing.T) {
 		t.Fatalf("collector error persisted after a successful probe: %+v", collectorErrors)
 	}
 }
+
+func TestHTTPHealthConnectionFailureIsAConfirmedFailure(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	url := server.URL
+	server.Close()
+	ok, detail, err := checkHTTP(context.Background(), url)
+	if err != nil || ok || detail == "" {
+		t.Fatalf("unreachable health URL = ok:%t detail:%q err:%v", ok, detail, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = checkHTTP(ctx, url)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled collector probe = %v, want context cancellation", err)
+	}
+}

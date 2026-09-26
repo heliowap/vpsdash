@@ -385,15 +385,18 @@ func checkHTTP(ctx context.Context, rawURL string) (bool, string, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return false, "", errors.New("invalid health URL")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+	req, err := http.NewRequestWithContext(probeCtx, "GET", rawURL, nil)
 	if err != nil {
 		return false, "", err
 	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return false, "", err
+		if ctx.Err() != nil {
+			return false, "", ctx.Err()
+		}
+		return false, err.Error(), nil
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
