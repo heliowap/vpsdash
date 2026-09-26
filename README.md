@@ -42,19 +42,17 @@ encaminha `/api` para `127.0.0.1:8484`.
 ## Configuração do host
 
 Instale o serviço sob o usuário próprio `vpsdash`, separado de `helio` e
-`gh-agents`. A criação do usuário e a instalação do serviço exigem acesso
-administrativo ao host:
+`gh-agents`. O script cria o usuário e o linger, instala o binário e a unit,
+recarrega o gerenciador systemd do usuário e verifica o resultado. Ele não
+inicia o painel antes da configuração:
 
 ```bash
-sudo useradd --create-home --shell /bin/bash vpsdash
-sudo loginctl enable-linger vpsdash
-sudo install -d -o vpsdash -g vpsdash -m 700 /home/vpsdash/.config/vpsdash
-sudo install -d -o vpsdash -g vpsdash -m 700 /home/vpsdash/.config/systemd/user
-sudo install -d -o vpsdash -g vpsdash -m 700 /home/vpsdash/bin
-sudo install -o vpsdash -g vpsdash -m 755 bin/vpsdash /home/vpsdash/bin/vpsdash
-sudo install -o vpsdash -g vpsdash -m 600 config.example.json /home/vpsdash/.config/vpsdash/config.json
-sudo install -o vpsdash -g vpsdash -m 644 deploy/vpsdash.service /home/vpsdash/.config/systemd/user/vpsdash.service
+go build -trimpath -o bin/vpsdash ./cmd/vpsdash
+sudo scripts/install-service.sh bin/vpsdash
 ```
+
+O script pode ser executado novamente após um novo build; ele atualiza o
+binário e a unit sem substituir `config.json` nem iniciar o serviço.
 
 Edite `config.json`: substitua o sufixo fictício `tailnet.ts.net`, ajuste
 usuários SSH e liste somente repositórios instalados no GitHub App. Defina
