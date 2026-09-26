@@ -19,6 +19,11 @@ implementação chegar (depois do gh-agents). Integrações já contratadas aqui
   e-mail. Porta/auth SMTP: **pendente na implementação**.
 - Origem: conversa paralela de 2026-09-24, integrada ao planejamento.
 
+> Atualização de implantação (2026-09-26): o painel passou a aceitar acesso
+> público por HTTPS e login, além da rota privada Tailscale Serve. O processo
+> permanece em loopback. A configuração atual está no README e no PRODUCT.md;
+> a topologia abaixo registra o conceito original.
+
 ## Arquitetura
 
 Binário único Go servindo API + SPA React/Vite embutida (`embed.FS`).

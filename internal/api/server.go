@@ -35,11 +35,19 @@ type Server struct {
 	Static          http.FileSystem
 	SMTPProvisioned bool
 	loginMu         sync.Mutex
-	loginFailures   map[string][]time.Time
+	loginAttempts   map[string]*loginAttempts
+	lastLoginPrune  time.Time
+	loginSlots      chan struct{}
+	verifyPassword  func(string) bool
+}
+
+type loginAttempts struct {
+	failures []time.Time
+	pending  int
 }
 
 func New(cfg config.Config, s *store.Store, c *collect.Collector, gh GitHub, a *auth.Authenticator) *Server {
-	return &Server{Config: cfg, Store: s, Collector: c, GitHub: gh, Auth: a, loginFailures: map[string][]time.Time{}}
+	return &Server{Config: cfg, Store: s, Collector: c, GitHub: gh, Auth: a, loginAttempts: map[string]*loginAttempts{}, loginSlots: make(chan struct{}, 2), verifyPassword: a.VerifyPassword}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -95,26 +103,60 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"authenticated": ok, "csrf": csrf})
 }
 
-func (s *Server) tooManyLogins(ip string) bool {
+func (s *Server) reserveLogin(ip string, now time.Time) bool {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
-	cutoff := time.Now().Add(-5 * time.Minute)
-	recent := s.loginFailures[ip][:0]
-	for _, t := range s.loginFailures[ip] {
+	cutoff := now.Add(-5 * time.Minute)
+	if now.Sub(s.lastLoginPrune) >= time.Minute {
+		for key, attempts := range s.loginAttempts {
+			recent := attempts.failures[:0]
+			for _, t := range attempts.failures {
+				if t.After(cutoff) {
+					recent = append(recent, t)
+				}
+			}
+			attempts.failures = recent
+			if attempts.pending == 0 && len(recent) == 0 {
+				delete(s.loginAttempts, key)
+			}
+		}
+		s.lastLoginPrune = now
+	}
+	attempts := s.loginAttempts[ip]
+	if attempts == nil {
+		attempts = &loginAttempts{}
+		s.loginAttempts[ip] = attempts
+	}
+	recent := attempts.failures[:0]
+	for _, t := range attempts.failures {
 		if t.After(cutoff) {
 			recent = append(recent, t)
 		}
 	}
-	s.loginFailures[ip] = recent
-	return len(recent) >= 5
+	attempts.failures = recent
+	if len(recent)+attempts.pending >= 5 {
+		return false
+	}
+	attempts.pending++
+	return true
+}
+
+func (s *Server) finishLogin(ip string, success bool, now time.Time) {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	attempts := s.loginAttempts[ip]
+	attempts.pending--
+	if success {
+		attempts.failures = nil
+	} else {
+		attempts.failures = append(attempts.failures, now)
+	}
+	if attempts.pending == 0 && len(attempts.failures) == 0 {
+		delete(s.loginAttempts, ip)
+	}
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	ip := loginClientIP(r)
-	if s.tooManyLogins(ip) {
-		errorResponse(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente em cinco minutos.")
-		return
-	}
 	var body struct {
 		Password string `json:"password"`
 	}
@@ -122,16 +164,24 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusBadRequest, "Senha inválida.")
 		return
 	}
-	if !s.Auth.VerifyPassword(body.Password) {
-		s.loginMu.Lock()
-		s.loginFailures[ip] = append(s.loginFailures[ip], time.Now())
-		s.loginMu.Unlock()
+	select {
+	case s.loginSlots <- struct{}{}:
+		defer func() { <-s.loginSlots }()
+	default:
+		errorResponse(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente em instantes.")
+		return
+	}
+	ip := loginClientIP(r)
+	if !s.reserveLogin(ip, time.Now()) {
+		errorResponse(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente em cinco minutos.")
+		return
+	}
+	verified := s.verifyPassword(body.Password)
+	s.finishLogin(ip, verified, time.Now())
+	if !verified {
 		errorResponse(w, http.StatusUnauthorized, "Senha incorreta.")
 		return
 	}
-	s.loginMu.Lock()
-	delete(s.loginFailures, ip)
-	s.loginMu.Unlock()
 	csrf := s.Auth.Issue(w, time.Now())
 	if csrf == "" {
 		errorResponse(w, http.StatusInternalServerError, "Não foi possível iniciar a sessão.")

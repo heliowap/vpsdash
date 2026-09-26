@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import {
   Activity, AlertCircle, ArrowUpRight, Boxes, Check, ChevronDown, ChevronRight,
@@ -78,7 +78,7 @@ function Login({ onLogin }: { onLogin: (csrf: string) => void }) {
         <button className="button button-primary" type="submit" disabled={busy}>{busy ? 'Entrando…' : 'Entrar no painel'} <ArrowUpRight size={17} /></button>
       </form>
     </section>
-    <p className="login-foot">Acesso restrito à tailnet · Sessão privada</p>
+    <p className="login-foot">Acesso por senha · conexão HTTPS</p>
   </main>
 }
 
@@ -309,36 +309,49 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('overview')
   const [notice, setNotice] = useState<Notice>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const refreshVersion = useRef(0)
 
   const refresh = useCallback(async () => {
     if (!session?.authenticated) return
+    const version = ++refreshVersion.current
     setRefreshing(true)
-    try { const result = await api.dashboard(); setData(result); setNotice(null) }
+    try {
+      const result = await api.dashboard()
+      if (version !== refreshVersion.current) return
+      setData(result)
+      setNotice(null)
+      const hosts = result.hosts.filter(host => host.kind === 'vps')
+      const items = await Promise.all(hosts.map(async host => {
+        try { return [host.id, await api.metrics(host.id)] as const }
+        catch (err) {
+          if (err instanceof ApiError && err.status === 401) throw err
+          return [host.id, null] as const
+        }
+      }))
+      if (version !== refreshVersion.current) return
+      setHistories(current => Object.fromEntries(items.map(([id, points]) => [id, points ?? current[id] ?? []])))
+    }
     catch (err) {
-      if (err instanceof ApiError && err.status === 401) { setSession({ authenticated: false, csrf: '' }); setData(null) }
+      if (version !== refreshVersion.current) return
+      if (err instanceof ApiError && err.status === 401) { setSession({ authenticated: false, csrf: '' }); setData(null); setHistories({}) }
       else setNotice({ kind: 'error', message: err instanceof Error ? err.message : 'Falha ao atualizar o painel.' })
-    } finally { setRefreshing(false) }
+    } finally { if (version === refreshVersion.current) setRefreshing(false) }
   }, [session?.authenticated])
 
   useEffect(() => { api.session().then(setSession).catch(() => setSession({ authenticated: false, csrf: '' })) }, [])
   useEffect(() => { if (!session?.authenticated) return; void refresh(); const timer = window.setInterval(() => void refresh(), 30_000); return () => window.clearInterval(timer) }, [refresh, session?.authenticated])
-  useEffect(() => {
-    if (!data) return
-    const hosts = data.hosts.filter(host => host.kind === 'vps')
-    Promise.all(hosts.map(async host => { try { return [host.id, await api.metrics(host.id)] as const } catch { return [host.id, []] as const } }))
-      .then(items => setHistories(Object.fromEntries(items)))
-  }, [data?.hosts.map(host => host.id).join('|')])
 
   async function logout() {
     if (!session) return
-    try { await api.logout(session.csrf) } finally { setSession({ authenticated: false, csrf: '' }); setData(null) }
+    ++refreshVersion.current
+    try { await api.logout(session.csrf) } finally { setSession({ authenticated: false, csrf: '' }); setData(null); setHistories({}); setRefreshing(false) }
   }
 
   if (!session) return <div className="boot-screen"><div className="boot-mark"><Activity size={23} /> vpsdash</div><span>Carregando painel…</span></div>
   if (!session.authenticated) return <Login onLogin={csrf => setSession({ authenticated: true, csrf })} />
 
   return <div className="app-shell">
-    <aside className="side-rail"><div className="brand"><span className="brand-icon"><Activity size={19} strokeWidth={2.5} /></span><span>vpsdash</span></div><nav aria-label="Seções do painel">{tabs.map(({ id, label, Icon }) => <button key={id} type="button" className={`nav-item ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined}><Icon size={19} /><span>{label}</span></button>)}</nav><div className="rail-foot"><span className="rail-label">PAINEL PRIVADO</span><span>tailnet · operador único</span></div></aside>
+    <aside className="side-rail"><div className="brand"><span className="brand-icon"><Activity size={19} strokeWidth={2.5} /></span><span>vpsdash</span></div><nav aria-label="Seções do painel">{tabs.map(({ id, label, Icon }) => <button key={id} type="button" className={`nav-item ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined}><Icon size={19} /><span>{label}</span></button>)}</nav><div className="rail-foot"><span className="rail-label">ACESSO AUTENTICADO</span><span>HTTPS · operador único</span></div></aside>
     <div className="main-wrap"><header className="top-bar"><div className="mobile-brand"><Activity size={19} strokeWidth={2.5} /><strong>vpsdash</strong></div><div className="top-context"><span className="top-context-title">Central de comando</span><span className="top-context-sub">Observação em tempo real</span></div><div className="top-actions"><button className={`icon-button ${refreshing ? 'is-spinning' : ''}`} type="button" onClick={() => void refresh()} aria-label="Atualizar dados" title="Atualizar dados"><RefreshCw size={19} /></button><button className="icon-button" type="button" onClick={() => void logout()} aria-label="Sair" title="Sair"><LogOut size={19} /></button></div></header>
       <main className="content"><div className="content-inner">
         {notice && <div className={`notice notice-${notice.kind}`} role="alert"><AlertCircle size={18} />{notice.message}</div>}

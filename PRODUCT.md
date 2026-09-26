@@ -13,13 +13,14 @@ binary serving API + embedded React/Vite SPA (`embed.FS`), SQLite local store,
 and `x/crypto/ssh` pool. Collector SSH keys are unique per host and limited
 by a Python 3 forced command that accepts only read operations. The terminal
 bridge is a later phase. No Node in production. The service binds to loopback;
-`tailscale serve` provides private HTTPS access.
+a public HTTPS reverse proxy serves the login page, and `tailscale serve` can
+also provide private tailnet access.
 
 ## Users
 
-One user: Helio, personal infrastructure operator. Accessed from anywhere on
-the tailnet, mobile-first (iOS included). No multi-user, no roles — single
-password, signed-cookie session.
+One user: Helio, personal infrastructure operator. Accessed over HTTPS from
+the public address or the tailnet, mobile-first (iOS included). No multi-user,
+no roles — single password, signed-cookie session.
 
 (Adjacent product context: the gh-agents fleet serves admins of enabled repos —
 personal, `intrador`, `All-Medical`, third parties — but Helio alone operates
@@ -40,8 +41,8 @@ A single-operator command center that treats things generic dashboards don't
 as first-class: persistent tmux sessions running CLI agents (opencode, codex,
 claude), tailnet device presence, and the self-hosted Actions fleet — operated
 through the same `AGENT_RUNNER`/`CI_RUNNER` variables the workflows read, never
-a parallel mechanism. Tailnet-only by design: the network boundary is the
-security model, not a feature gap.
+a parallel mechanism. Public access uses HTTPS, the panel password, signed
+sessions, and bounded login attempts; the service itself remains on loopback.
 
 ## Operating Context
 
@@ -83,7 +84,8 @@ v2 (confirmed direction, not v1 scope): Web Push via VAPID, send-keys from
 notifications, agent session state (working/waiting/idle), run log streaming,
 minutes-per-backend cost proxy, command snippets, incident history.
 
-Constraints: loopback bind plus private Tailscale Serve; HTTPS required for
+Constraints: loopback bind plus HTTPS reverse proxy for the public address,
+with optional private Tailscale Serve access; HTTPS required for
 PWA/Web Push; no Node in production; Windows hosts are presence-only; OS-user
 isolation is a hard contract. The runner switch appears only where the
 `vars.X || default` pattern was confirmed in inventory. The phase B GitHub

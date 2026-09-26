@@ -322,14 +322,17 @@ func (c *Collector) host(id string) (config.Host, bool) {
 }
 
 func (c *Collector) checkProject(ctx context.Context, h config.Host, p store.Project) {
-	err := c.projectHealth(ctx, h, p)
-	detail := "healthy"
+	ok, detail, err := c.projectHealth(ctx, h, p)
+	scope := "check:" + p.HostID + "/" + p.Name
 	if err != nil {
-		detail = err.Error()
+		c.setError(scope, err)
+		return
 	}
-	if recordErr := c.recordProjectCheck(ctx, p, err == nil, detail, time.Now()); recordErr != nil {
-		c.setError("check:"+p.Name, recordErr)
+	if recordErr := c.recordProjectCheck(ctx, p, ok, detail, time.Now()); recordErr != nil {
+		c.setError(scope, recordErr)
+		return
 	}
+	c.setError(scope, nil)
 }
 
 func (c *Collector) recordProjectCheck(ctx context.Context, p store.Project, ok bool, detail string, now time.Time) error {
@@ -348,18 +351,18 @@ func (c *Collector) recordProjectCheck(ctx context.Context, p store.Project, ok 
 	return nil
 }
 
-func (c *Collector) projectHealth(ctx context.Context, h config.Host, p store.Project) error {
+func (c *Collector) projectHealth(ctx context.Context, h config.Host, p store.Project) (bool, string, error) {
 	if p.HealthURL != "" {
 		return checkHTTP(ctx, p.HealthURL)
 	}
 	names := []string{p.Name}
 	if p.Expected != "" {
 		if err := json.Unmarshal([]byte(p.Expected), &names); err != nil {
-			return err
+			return false, "", err
 		}
 	}
 	if len(names) == 0 {
-		return errors.New("no expected services configured")
+		return false, "", errors.New("no expected services configured")
 	}
 	for _, name := range names {
 		output, err := c.Executor.Check(ctx, h, p.Source, name)
@@ -368,36 +371,36 @@ func (c *Collector) projectHealth(ctx context.Context, h config.Host, p store.Pr
 			if reason == "" {
 				reason = err.Error()
 			}
-			return fmt.Errorf("%s: %s", name, reason)
+			return false, "", fmt.Errorf("%s: %s", name, reason)
 		}
 		if strings.TrimSpace(output) != "active" {
-			return fmt.Errorf("%s is %s", name, strings.TrimSpace(output))
+			return false, fmt.Sprintf("%s is %s", name, strings.TrimSpace(output)), nil
 		}
 	}
-	return nil
+	return true, "healthy", nil
 }
 
-func checkHTTP(ctx context.Context, rawURL string) error {
+func checkHTTP(ctx context.Context, rawURL string) (bool, string, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return errors.New("invalid health URL")
+		return false, "", errors.New("invalid health URL")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return false, fmt.Sprintf("HTTP %d", resp.StatusCode), nil
 	}
-	return nil
+	return true, "healthy", nil
 }
 
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }

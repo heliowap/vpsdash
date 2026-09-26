@@ -1,9 +1,9 @@
 # vpsdash
 
-Painel privado de operação da tailnet: saúde de hosts e projetos, sessões
+Painel de operação para um único operador: saúde de hosts e projetos, sessões
 tmux, runners do gh-agents e troca de backend pelo mesmo `AGENT_RUNNER` /
-`CI_RUNNER` que os workflows leem. Um operador, acesso por senha, somente
-atrás de `tailscale serve`.
+`CI_RUNNER` que os workflows leem. Acesso público por HTTPS e senha em
+`https://app.intrador.tech/`; Tailscale Serve continua como rota privada.
 
 ## Estado da implementação
 
@@ -21,8 +21,8 @@ O canal SMTP mostra "não provisionado" e mantém eventos pendentes enquanto
 attach ficam para `v0.2`, conforme a especificação. A interface não afirma
 que um host está saudável antes da primeira leitura.
 
-O painel pode ser instalado na tela inicial como PWA pelo navegador da
-tailnet. O service worker guarda somente a interface estática; chamadas
+O painel pode ser instalado na tela inicial como PWA pelo navegador. O service
+worker guarda somente a interface estática; chamadas
 `/api/` continuam na rede e nunca são servidas do cache. Sem conexão, o
 painel não apresenta uma leitura antiga como estado atual.
 
@@ -177,6 +177,36 @@ porta automaticamente e aguarda a emissão inicial do certificado HTTPS.
 
 Use **Serve**, não Funnel. O cookie de sessão exige HTTPS. A sintaxe de
 `tailscale serve` segue a [documentação oficial](https://tailscale.com/docs/reference/tailscale-cli/serve).
+
+### Acesso público com login
+
+Para servir o painel em um domínio público, mantenha o binário escutando
+somente em `127.0.0.1:8484` e configure um proxy HTTPS no mesmo host. Exemplo
+de bloco Caddy (troque o domínio pelo seu):
+
+```caddyfile
+app.example.com {
+    encode gzip zstd
+    reverse_proxy 127.0.0.1:8484 {
+        header_up X-Real-IP {remote_host}
+    }
+}
+```
+
+O proxy deve sobrescrever `X-Real-IP` com o IP da conexão recebida; não
+encaminhe um valor fornecido pelo navegador. O login usa esse IP para limitar
+tentativas, e o serviço limita também o número total de verificações de senha
+simultâneas. Se outro proxy estiver à frente do Caddy, configure a cadeia de
+proxies confiáveis antes de usar o IP do cliente. A página de login é pública;
+as APIs de operação exigem sessão assinada. Confira a rota após a instalação:
+
+```bash
+curl -I https://app.example.com/
+curl -i https://app.example.com/api/dashboard
+```
+
+A segunda chamada, sem cookie, deve retornar `401`. A rota Tailscale Serve
+pode coexistir com a pública; não use Tailscale Funnel para expor outra rota.
 
 ## GitHub App `gh-agents-ops`
 

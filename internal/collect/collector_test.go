@@ -3,6 +3,8 @@ package collect
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -119,5 +121,67 @@ func TestTailnetPresenceDoesNotOverrideVPSSSHState(t *testing.T) {
 	}
 	if hosts[0].Latest == nil || hosts[0].Latest.CPU != nil {
 		t.Fatalf("first CPU sample should be unknown: %+v", hosts[0].Latest)
+	}
+}
+
+func TestUnavailableProjectProbeDoesNotQueueDownAlert(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(filepath.Join(t.TempDir(), "vpsdash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	h := config.Host{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps", SSHKeyFile: filepath.Join(t.TempDir(), "missing-key")}
+	if err := s.UpsertHost(ctx, store.Host{ID: h.ID, TailnetName: h.TailnetName, Kind: h.Kind}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertCandidate(ctx, h.ID, "example.service", "systemd"); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := s.Projects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("projects = %+v, %v", projects, err)
+	}
+	p := projects[0]
+	if err := s.SetMonitored(ctx, p.ID, true, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	c := New(config.Config{Hosts: []config.Host{h}}, s, nil)
+	defer c.Close()
+	for i := 0; i < 3; i++ {
+		c.checkProject(ctx, h, p)
+	}
+	projects, err = s.Projects(ctx)
+	if err != nil || projects[0].CheckOK != nil {
+		t.Fatalf("unavailable SSH probe recorded a project failure: %+v, %v", projects, err)
+	}
+	alerts, err := s.PendingAlerts(ctx)
+	if err != nil || len(alerts) != 0 {
+		t.Fatalf("unavailable SSH probe queued alerts: %+v, %v", alerts, err)
+	}
+	_, collectorErrors, _ := c.Snapshot()
+	if collectorErrors["check:vps/example.service"] == "" {
+		t.Fatal("SSH failure was not exposed as a collector error")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	p.HealthURL = server.URL
+	for i := 0; i < 3; i++ {
+		c.checkProject(ctx, h, p)
+	}
+	projects, err = s.Projects(ctx)
+	if err != nil || projects[0].CheckOK == nil || *projects[0].CheckOK {
+		t.Fatalf("observed HTTP failure was not recorded: %+v, %v", projects, err)
+	}
+	alerts, err = s.PendingAlerts(ctx)
+	if err != nil || len(alerts) != 1 || alerts[0].Subject != "vps / example.service" {
+		t.Fatalf("confirmed failures did not queue one alert: %+v, %v", alerts, err)
+	}
+	_, collectorErrors, _ = c.Snapshot()
+	if collectorErrors["check:vps/example.service"] != "" {
+		t.Fatalf("collector error persisted after a successful probe: %+v", collectorErrors)
 	}
 }

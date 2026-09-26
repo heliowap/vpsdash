@@ -1,6 +1,6 @@
 ---
 name: vpsdash
-description: A private tailnet command center with the clarity of a field maintenance ledger.
+description: A single-operator command center with the clarity of a field maintenance ledger.
 colors:
   action: "#174c51"
   action-hover: "#0f383c"

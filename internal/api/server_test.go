@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/heliowap/vpsdash/internal/auth"
 	"github.com/heliowap/vpsdash/internal/config"
@@ -187,6 +188,92 @@ func TestLoginRateLimitIgnoresUntrustedProxyHeader(t *testing.T) {
 		}
 		if w.Code != want {
 			t.Fatalf("attempt %d: status %d, want %d", i+1, w.Code, want)
+		}
+	}
+}
+
+func TestLoginReservationsCountInFlightAttempts(t *testing.T) {
+	a, err := auth.New("$argon2id$test", []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(config.Config{}, nil, nil, nil, a)
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		if !s.reserveLogin("198.51.100.10", now) {
+			t.Fatalf("attempt %d was refused", i+1)
+		}
+	}
+	if s.reserveLogin("198.51.100.10", now) {
+		t.Fatal("sixth concurrent attempt was accepted")
+	}
+	s.finishLogin("198.51.100.10", false, now)
+	if s.reserveLogin("198.51.100.10", now) {
+		t.Fatal("failed attempt released the rate limit")
+	}
+	s.finishLogin("198.51.100.10", true, now)
+	if !s.reserveLogin("198.51.100.10", now) {
+		t.Fatal("successful login did not clear previous failures")
+	}
+}
+
+func TestLoginBoundsConcurrentPasswordVerification(t *testing.T) {
+	a, err := auth.New("$argon2id$test", []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(config.Config{}, nil, nil, nil, a)
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	s.verifyPassword = func(string) bool {
+		started <- struct{}{}
+		<-release
+		return false
+	}
+	h := s.Handler()
+	request := func() int {
+		r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"wrong"}`))
+		r.RemoteAddr = "198.51.100.10:12345"
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	responses := make(chan int, 2)
+	for i := 0; i < 2; i++ {
+		go func() { responses <- request() }()
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("password verifier did not start")
+		}
+	}
+	overloaded := make(chan int, 6)
+	for i := 0; i < 6; i++ {
+		go func() { overloaded <- request() }()
+	}
+	for i := 0; i < 6; i++ {
+		select {
+		case got := <-overloaded:
+			if got != http.StatusTooManyRequests {
+				t.Fatalf("request during verification = %d", got)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("request waited for an available password verifier")
+		}
+	}
+	close(release)
+	released = true
+	for i := 0; i < 2; i++ {
+		if got := <-responses; got != http.StatusUnauthorized {
+			t.Fatalf("verified request = %d", got)
 		}
 	}
 }
