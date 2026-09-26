@@ -1,0 +1,1 @@
+{"Self":{"HostName":"intrador-tech-vps","OS":"linux","Online":true,"DNSName":"intrador-tech-vps.tailnet.ts.net."},"Peer":{"peer-a":{"HostName":"app","OS":"linux","Online":true,"DNSName":"allmedical-app.tailnet.ts.net."},"peer-b":{"HostName":"Oppenheimer","OS":"windows","Online":false,"DNSName":"client.tailnet.ts.net."}}}

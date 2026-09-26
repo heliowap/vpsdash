@@ -1,0 +1,16 @@
+[Unit]
+Description=vpsdash private operations dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+ExecStart=%h/bin/vpsdash --config %h/.config/vpsdash/config.json
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

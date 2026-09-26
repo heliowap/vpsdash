@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/TestSprite/testsprite-cli/v0.12.0/schemas/plan.schema.json",
+  "projectId": "7ee64bea-9230-4c33-9c5e-7addc66eabe3",
+  "type": "frontend",
+  "name": "Entrar e ver a saúde dos hosts",
+  "planSteps": [
+    { "type": "action", "description": "Abra a página inicial do aplicativo. No formulário com o rótulo 'Senha do painel', preencha somente a senha de teste armazenada no ambiente do projeto e clique em 'Entrar no painel'. Ignore o nome de usuário armazenado: esta aplicação tem apenas senha." },
+    { "type": "assertion", "description": "O painel abre, mostra a seção 'Hosts', o host intrador-tech-vps e valores reais de CPU, memória ou disco após a coleta. A navegação tem Visão geral, Projetos, Frota e Sessões." },
+    { "type": "action", "description": "Clique em 'Projetos' na navegação." },
+    { "type": "assertion", "description": "A página Projetos mostra as listas Monitorados e Candidatos e explica que a descoberta é silenciosa." }
+  ]
+}

@@ -1,0 +1,3 @@
+docker	cloudflare-os-caddy	Up 6 weeks
+systemd	cloudflare-os.service	active
+systemd	dbus.service	active

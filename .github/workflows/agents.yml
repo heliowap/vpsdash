@@ -1,0 +1,75 @@
+name: agents
+
+# Enables gh-agents on this repo: PR review, `/oc` fix, CI diagnosis.
+# Onboarding checklist: https://github.com/heliowap/gh-agents#onboarding
+
+on:
+  pull_request:
+    # set this to the repo's default branch
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  workflow_run:
+    # set this to your CI workflow names — the filter takes exact names and
+    # `on:` can't read expressions, so this list is what decides when
+    # ci-doctor wakes; keep it in sync with ci_workflows. Leaving 'ci' on a
+    # repo whose CI has another name means ci-doctor silently never fires.
+    workflows: ['ci']
+    types: [completed]
+
+# The reusable callee can only use what is granted here — this is the union
+# of its three jobs' permissions.
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  agents:
+    uses: heliowap/gh-agents/.github/workflows/agents.yml@v1
+    # Only trusted PR commands enter concurrency. Otherwise an unrelated
+    # comment can replace a pending /oc request; plain issues never run fix.
+    if: >-
+      github.event_name == 'pull_request'
+      || github.event_name == 'workflow_run'
+      || (
+        ((github.event_name == 'issue_comment' && github.event.issue.pull_request)
+          || github.event_name == 'pull_request_review_comment')
+        && github.event.comment.user.type != 'Bot'
+        && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+        && (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode'))
+      )
+    # the callee's top-level concurrency never applies inside a caller run;
+    # group by event + target here so a comment never cancels an in-flight
+    # review — one group per PR let any comment kill it (intrador #1417).
+    # for workflow_run the id is unique per triggering run — the group never
+    # collides there; ci-doctor dedup comes from its marker comment.
+    # Every declared event has a target; run_id isolates malformed payloads.
+    concurrency:
+      group: >-
+        gh-agents-${{ github.event_name }}-${{ github.event.pull_request.number
+        || github.event.issue.number || github.event.workflow_run.id
+        || github.run_id }}
+      # A newer PR revision supersedes its review. Comments queue; a new
+      # /oc request must not interrupt a fixer already editing the branch.
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    # `inherit` only passes secrets to a reusable workflow of the same owner
+    # (org or enterprise). Repos outside `heliowap` map them explicitly — with
+    # `inherit` the key arrives empty and the preflight fails:
+    #   secrets:
+    #     OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+    #     FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+    secrets: inherit
+    # with:
+    #   runs-on: self-hosted        # default; vars.AGENT_RUNNER overrides per repo
+    #   model: opencode-go/glm-5.3-flash
+    #   model_fallbacks: 'a/1,b/2'  # probed in order; first responding model wins
+    #   use_container: true         # false = run on host (tests needing Docker)
+    #   ci_workflows: 'ci,qe'       # empty = all; widen `workflows:` above to match
