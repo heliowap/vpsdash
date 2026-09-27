@@ -55,8 +55,15 @@ func TestLoadRequiresDistinctKeysForRemoteHosts(t *testing.T) {
 }
 
 func TestExampleInventoryIsValid(t *testing.T) {
-	if _, err := Load(filepath.Join("..", "..", "config.example.json")); err != nil {
+	example, err := Load(filepath.Join("..", "..", "config.example.json"))
+	if err != nil {
 		t.Fatalf("example inventory: %v", err)
+	}
+	// install-service.sh copies the example verbatim; file reading must stay opt-in.
+	for _, h := range example.Hosts {
+		if len(h.FileRoots) > 0 {
+			t.Fatalf("example host %s enables file_roots", h.ID)
+		}
 	}
 	c := Config{Listen: "127.0.0.1:8484", TailscaleServeHost: "other.example.invalid", Hosts: []Host{{ID: "vps", TailnetName: "vps.example.invalid", Kind: "presence"}}}
 	if err := c.Validate(); err == nil {

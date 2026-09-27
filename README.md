@@ -32,7 +32,8 @@ que um host está saudável antes da primeira leitura.
 
 A aba Arquivos navega e exibe, somente para leitura, as pastas listadas em
 `file_roots` de cada VPS no inventário (veja [Arquivos](#arquivos-somente-leitura)).
-Sem `file_roots`, a aba não aparece.
+A leitura é opcional: o `config.example.json` não traz `file_roots`. Sem
+`file_roots`, a leitura fica desativada e a aba não aparece.
 
 O painel pode ser instalado na tela inicial como PWA pelo navegador. O service
 worker guarda somente a interface estática; chamadas
@@ -184,10 +185,21 @@ A aba Arquivos lista pastas e exibe arquivos de texto dentro de raízes
 explícitas. Nada é gravado, movido ou apagado. O acesso exige duas listas
 que concordem:
 
-1. `file_roots` do host no inventário do painel, por exemplo
-   `"file_roots": ["/home/helio/Projetos"]`. O painel recusa qualquer caminho
-   fora dessas raízes antes de contatar o host. Sem `file_roots`, a leitura
-   fica desativada e a aba não aparece.
+1. `file_roots` do host no inventário do painel. O painel recusa qualquer
+   caminho fora dessas raízes antes de contatar o host. Sem `file_roots`, a
+   leitura fica desativada e a aba não aparece. O exemplo e a instalação
+   padrão não definem o campo; para ativar, edite o inventário privado
+   (`sudoedit /home/vpsdash/.config/vpsdash/config.json`) e acrescente o
+   campo à VPS desejada:
+
+   ```json
+   { "id": "intrador-tech-vps", "tailnet_name": "sample-vps.example.invalid", "kind": "vps", "ssh_user": "helio",
+     "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador-tech-vps",
+     "file_roots": ["/home/helio/Projetos"] }
+   ```
+
+   Confira com `sudo -u vpsdash /home/vpsdash/bin/vpsdash check-config
+   --config /home/vpsdash/.config/vpsdash/config.json`.
 2. O arquivo `~/.config/vpsdash-files/roots` da conta SSH no próprio host
    (uma raiz absoluta por linha, dono dessa conta ou root, sem escrita para
    grupo ou outros, inclusive na pasta). A ponte `ssh-readonly.py` lê as raízes
@@ -203,7 +215,10 @@ scripts/setup-local-collector.sh /home/helio/Projetos
 sudo scripts/setup-remote-collector.sh <host-id> <usuario-ssh> <fingerprint-SHA256> /srv/app
 ```
 
-O assistente repassa automaticamente o `file_roots` do inventário. Para
+Quando o inventário tem `file_roots` para um host, o assistente mostra as
+pastas exatas e só grava o arquivo de raízes se você responder sim (o padrão
+é não). Sem `file_roots` ou com a resposta não, nenhum arquivo de raízes é
+criado ou alterado. Para
 desativar a leitura em um host, remova `file_roots` do inventário e apague
 `~/.config/vpsdash-files/roots` nesse host.
 

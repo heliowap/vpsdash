@@ -259,6 +259,12 @@ binários. Sem schema novo: nada é persistido no SQLite.
   pertencer à conta SSH ou a root e não pode ter escrita para grupo/outros,
   nem a pasta. O painel não tem comando que altere esse arquivo; o acesso
   efetivo é a interseção das duas listas.
+- **Opt-in.** `config.example.json` não define `file_roots`, então a
+  instalação padrão não liga a leitura. Sem `file_roots`, a leitura fica
+  desativada e a aba não aparece. O assistente só grava o arquivo de raízes
+  de um host quando o inventário privado define `file_roots` para ele e o
+  operador responde sim (padrão não) a uma pergunta que lista os caminhos
+  exatos.
 - **Protocolo.** Mesma chave e mesmo `command=` da coleta. Comandos
   `vpsdash-files list <caminho-base64url>` e
   `vpsdash-files read <caminho-base64url> <offset>`; resposta JSON em uma
