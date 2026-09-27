@@ -352,7 +352,10 @@ mapfile -t planned_remote_hosts < <(jq -r --arg local "$local_host_id" --slurpfi
   | select(.id != $local and (.kind == "vps" or (.ssh_key_file // "") != "" or (.id as $id | $sample_vps | index($id))))
   | .id
 ' "$config_file")
-"$repo_dir/scripts/setup-local-collector.sh"
+# Inventory file_roots become the bridge's own roots file on each host.
+file_roots_for() { jq -r --arg id "$1" '.hosts[] | select(.id == $id) | .file_roots[]?' "$config_file"; }
+mapfile -t local_file_roots < <(file_roots_for "$local_host_id")
+"$repo_dir/scripts/setup-local-collector.sh" "${local_file_roots[@]}"
 if getent passwd gh-agents >/dev/null; then
   "$repo_dir/scripts/setup-runner-collector.sh"
 else
@@ -392,7 +395,8 @@ for host_id in "${planned_remote_hosts[@]}"; do
     continue
   fi
   ask REMOTE_USER "Usuário SSH de $host_id:"
-  "$repo_dir/scripts/setup-remote-collector.sh" "$host_id" "$REMOTE_USER" "$HOST_FINGERPRINT"
+  mapfile -t remote_file_roots < <(file_roots_for "$host_id")
+  "$repo_dir/scripts/setup-remote-collector.sh" "$host_id" "$REMOTE_USER" "$HOST_FINGERPRINT" "${remote_file_roots[@]}"
   activate_remote "$host_id" "$REMOTE_USER"
   unset REMOTE_USER HOST_FINGERPRINT
 done

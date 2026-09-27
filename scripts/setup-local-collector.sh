@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 # Authorize vpsdash to collect read-only data from helio on this VPS.
+# Optional arguments are the directories the panel may browse read-only;
+# without them an existing roots file is kept unchanged.
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 operator_home=/home/helio
 service_home=/home/vpsdash
 bridge="$operator_home/.local/bin/vpsdash-ssh-readonly.py"
+file_roots=("$@")
+for root in "${file_roots[@]}"; do
+  if [[ ! "$root" =~ ^(/[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*)+$ || "$root" =~ /\.\.?(/|$) ]]; then
+    echo "Raiz de arquivos inválida: $root (use um caminho absoluto, sem / final nem ..)" >&2
+    exit 2
+  fi
+done
 tailnet_name="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
 local_host_id="${tailnet_name%%.*}"
 if [[ ! "$tailnet_name" =~ ^[A-Za-z0-9.-]+$ || ! "$local_host_id" =~ ^[A-Za-z0-9_-]+$ ]]; then
@@ -34,6 +43,20 @@ fi
 
 as_operator install -d -m 755 "$operator_home/.local/bin"
 as_operator install -m 755 "$repo_dir/scripts/ssh-readonly.py" "$bridge"
+# The bridge reads roots only from this helio-owned file; the panel cannot
+# change it over SSH. Inventory file_roots must stay within this list.
+roots_dir="$operator_home/.config/vpsdash-files"
+if (( ${#file_roots[@]} )); then
+  as_operator install -d -m 700 "$operator_home/.config" "$roots_dir"
+  printf '%s\n' "${file_roots[@]}" | as_operator tee "$roots_dir/roots.new" >/dev/null
+  as_operator chmod 600 "$roots_dir/roots.new"
+  as_operator mv -f "$roots_dir/roots.new" "$roots_dir/roots"
+  echo "Leitura de arquivos autorizada em: ${file_roots[*]}"
+elif as_operator test -e "$roots_dir/roots"; then
+  echo "Raízes de arquivos mantidas em $roots_dir/roots."
+else
+  echo 'Leitura de arquivos desativada neste host (nenhuma raiz informada).'
+fi
 as_root install -d -o vpsdash -g vpsdash -m 700 "$service_home/.ssh"
 if ! as_root test -e "$service_key"; then
   as_service ssh-keygen -q -t ed25519 -N '' -f "$service_key"
