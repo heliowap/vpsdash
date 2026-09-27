@@ -34,7 +34,8 @@ permissions:
 jobs:
   agents:
     # gh-agents releases the deliberately moved @v1 tag as its caller contract.
-    uses: heliowap/gh-agents/.github/workflows/agents.yml@v1
+    # TEST ONLY — gh-agents branch under test (ChatGPT login); do not merge
+    uses: heliowap/gh-agents/.github/workflows/agents.yml@fix/dogfood-review-findings
     # Only trusted PR commands enter concurrency. Otherwise an unrelated
     # comment can replace a pending /oc request; plain issues never run fix.
     if: >-
@@ -71,7 +72,9 @@ jobs:
     # OpenCode Go can exhaust its balance; keep review available through a
     # zero-retention model while retaining the paid model as the first choice.
     with:
-      model_fallbacks: opencode/space-bunny-free
+      # TEST ONLY: no fallback, so a broken login fails instead of hiding
+      model: openai/gpt-6-luna-fast#xhigh
+      gh_agents_ref: fix/dogfood-review-findings
       runs-on: ${{ vars.AGENT_RUNNER || 'ubuntu-latest' }}
       # model: opencode-go/glm-5.3-flash
       # use_container: true         # false = run on host (tests needing Docker)
