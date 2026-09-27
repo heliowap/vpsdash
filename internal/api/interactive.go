@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -168,8 +169,10 @@ type snippetView struct {
 }
 
 type interactiveHost struct {
-	ID           string `json:"id"`
-	Terminal     bool   `json:"terminal"`
+	ID       string `json:"id"`
+	Terminal bool   `json:"terminal"`
+	// KeyMissing reports an interactive_key_file that vpsdash cannot read.
+	KeyMissing   bool   `json:"key_missing,omitempty"`
 	LocalCommand string `json:"local_command"`
 	// AttachCommands holds the read-only local ssh command per observed
 	// tmux session, for "abrir no terminal local".
@@ -222,7 +225,9 @@ func (s *Server) interactiveInfo(w http.ResponseWriter, r *http.Request) {
 		if host.Kind != "vps" {
 			continue
 		}
-		view := interactiveHost{ID: host.ID, Terminal: host.Interactive() && s.Interactive != nil, AttachCommands: map[string]string{}, Snippets: []snippetView{}}
+		_, keyErr := os.Stat(host.InteractiveKeyFile)
+		keyMissing := host.Interactive() && keyErr != nil
+		view := interactiveHost{ID: host.ID, Terminal: host.Interactive() && !keyMissing && s.Interactive != nil, KeyMissing: keyMissing, AttachCommands: map[string]string{}, Snippets: []snippetView{}}
 		if host.SSHUser != "" && !host.Local {
 			view.LocalCommand = localCommand(host, nil)
 			for _, session := range sessions {

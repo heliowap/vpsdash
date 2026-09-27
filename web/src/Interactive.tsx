@@ -172,7 +172,7 @@ function HostAccess({ host, busy, results, onTerminal, onSnippet }: { host: Inte
   return <article className="access-row">
     <div className="access-head">
       <SquareTerminal size={19} />
-      <div><strong>{host.id}</strong><small>{host.terminal ? `Chave interativa configurada · ${host.snippets.length} ${host.snippets.length === 1 ? 'comando' : 'comandos'}` : 'Sem chave interativa no inventário'}</small></div>
+      <div><strong>{host.id}</strong><small>{host.terminal ? `Chave interativa configurada · ${host.snippets.length} ${host.snippets.length === 1 ? 'comando' : 'comandos'}` : host.key_missing ? 'Chave interativa ausente no host do painel · execute scripts/setup-interactive-key.sh' : 'Sem chave interativa no inventário'}</small></div>
       <div className="row-actions">
         {host.terminal ? <button className="button button-primary button-small" type="button" onClick={onTerminal}><TerminalIcon size={15} />Abrir terminal</button> : <span className="state-stamp stamp-unknown">Indisponível</span>}
         {host.local_command && <button className="button button-small button-plain" type="button" aria-expanded={showLocal} onClick={() => setShowLocal(!showLocal)}>Terminal local</button>}
