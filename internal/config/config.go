@@ -19,6 +19,9 @@ type Host struct {
 	SSHUser     string `json:"ssh_user,omitempty"`
 	SSHKeyFile  string `json:"ssh_key_file,omitempty"`
 	Local       bool   `json:"local,omitempty"`
+	// FileRoots enables read-only file browsing below these directories.
+	// Remote hosts must also list them in the bridge's own roots file.
+	FileRoots []string `json:"file_roots,omitempty"`
 }
 
 type Repository struct {
@@ -116,6 +119,9 @@ func (c Config) Validate() error {
 		if h.Kind != "vps" && h.Kind != "presence" {
 			return fmt.Errorf("invalid kind for host %s", h.ID)
 		}
+		if err := validateFileRoots(h); err != nil {
+			return err
+		}
 		if h.Kind == "vps" && !h.Local {
 			if h.SSHUser == "" {
 				return fmt.Errorf("host %s needs ssh_user", h.ID)
@@ -162,6 +168,23 @@ func (c Config) Validate() error {
 		if repo.RunnerHostID != "" && !seenHosts[repo.RunnerHostID] {
 			return fmt.Errorf("unknown runner host %s", repo.RunnerHostID)
 		}
+	}
+	return nil
+}
+
+func validateFileRoots(h Host) error {
+	if len(h.FileRoots) > 0 && h.Kind != "vps" {
+		return fmt.Errorf("host %s: file_roots requires kind vps", h.ID)
+	}
+	seen := map[string]bool{}
+	for _, root := range h.FileRoots {
+		if !filepath.IsAbs(root) || filepath.Clean(root) != root || root == "/" || strings.ContainsRune(root, 0) || len(root) > 4096 {
+			return fmt.Errorf("host %s: file root %q must be a clean absolute directory other than /", h.ID, root)
+		}
+		if seen[root] {
+			return fmt.Errorf("host %s: duplicate file root %s", h.ID, root)
+		}
+		seen[root] = true
 	}
 	return nil
 }

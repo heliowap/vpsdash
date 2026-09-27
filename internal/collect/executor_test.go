@@ -201,3 +201,19 @@ func TestExecutorBoundsStalledSessionOpen(t *testing.T) {
 		t.Fatal("stalled connection stayed in the pool")
 	}
 }
+
+func TestFileCommandOnlySendsFileReads(t *testing.T) {
+	executor := NewExecutor()
+	remote := config.Host{ID: "vps", Kind: "vps", SSHUser: "operator", SSHKeyFile: "/nonexistent/key"}
+	for _, command := range []string{"sh -s", "vpsdash-health systemd eA", "vpsdash-files list eA\nsh -s"} {
+		if _, err := executor.FileCommand(context.Background(), remote, command); err == nil || !strings.Contains(err.Error(), "invalid file command") {
+			t.Errorf("%q = %v", command, err)
+		}
+	}
+	if _, err := executor.FileCommand(context.Background(), config.Host{ID: "local", Local: true}, "vpsdash-files list eA"); err == nil {
+		t.Error("local host was sent over SSH")
+	}
+	if len(executor.clients) != 0 {
+		t.Fatalf("rejected commands opened connections: %v", executor.clients)
+	}
+}
