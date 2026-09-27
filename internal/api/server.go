@@ -43,6 +43,7 @@ type Server struct {
 	Auth            *auth.Authenticator
 	Static          http.FileSystem
 	SMTPProvisioned bool
+	Files           FileBrowser
 	loginMu         sync.Mutex
 	loginAttempts   map[string]*loginAttempts
 	globalFailures  []time.Time
@@ -82,6 +83,8 @@ func (s *Server) Handler() http.Handler {
 	private.HandleFunc("GET /api/dashboard", s.dashboard)
 	private.HandleFunc("GET /api/hosts/{id}/metrics", s.metrics)
 	private.HandleFunc("GET /api/minutes", s.minutes)
+	private.HandleFunc("GET /api/hosts/{id}/files", s.listFiles)
+	private.HandleFunc("GET /api/hosts/{id}/file", s.readFile)
 	private.HandleFunc("PATCH /api/projects/{id}", s.updateProject)
 	private.HandleFunc("GET /api/projects/{id}/incidents", s.projectIncidents)
 	private.HandleFunc("POST /api/repos/{owner}/{repo}/switch", s.switchRunner)
@@ -373,7 +376,15 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, 500, "Não foi possível ler as operações das units.")
 		return
 	}
-	jsonResponse(w, 200, map[string]any{"hosts": hosts, "projects": projects, "runners": runners, "sessions": sessions, "queued": queued, "repositories": repos, "collector_errors": errors, "fleet_seen_at": fleetSeenAt, "smtp_provisioned": s.SMTPProvisioned, "unit_ops": unitOps})
+	fileRoots := map[string][]string{}
+	if s.Files != nil {
+		for _, host := range s.Config.Hosts {
+			if host.Kind == "vps" && len(host.FileRoots) > 0 {
+				fileRoots[host.ID] = host.FileRoots
+			}
+		}
+	}
+	jsonResponse(w, 200, map[string]any{"hosts": hosts, "projects": projects, "runners": runners, "sessions": sessions, "queued": queued, "repositories": repos, "collector_errors": errors, "fleet_seen_at": fleetSeenAt, "smtp_provisioned": s.SMTPProvisioned, "unit_ops": unitOps, "file_roots": fileRoots})
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
