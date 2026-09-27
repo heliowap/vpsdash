@@ -185,6 +185,13 @@ Contrato do coletor: `alerts` com `channel='smtp'` → fila interna → envio
 via `allmedical-mail:587` STARTTLS, auth `vpsdash@intrador.com.br`
 (senha em `/home/vpsdash/.config/vpsdash/smtp.env`).
 
+Roteamento por severidade (v2): `project_down` e `runner_offline` geram uma
+linha `smtp` e, havendo dispositivo inscrito, uma linha `webpush`;
+`agent_waiting` gera só `webpush`. A linha `webpush` se desdobra em
+`push_deliveries` (uma por inscrição em `push_subscriptions`) e recebe
+`sent_at` quando todas as entregas terminam. Chaves VAPID em
+`/home/vpsdash/.config/vpsdash/webpush.env` (`0600`).
+
 **Pendente de coleta no host** (única pendência restante): confirmar porta
 (587 vs 465), mecanismo de auth (PLAIN vs LOGIN) e criar a conta
 `vpsdash@` — rodar uma vez: `openssl s_client -starttls smtp -connect

@@ -24,9 +24,10 @@ página Frota, cada unit de runner pode ser reiniciada ou drenada após
 confirmação (veja [Operar units de runner](#operar-units-de-runner)).
 
 O canal SMTP mostra "não provisionado" e mantém eventos pendentes enquanto
-`smtp.env` não existir. A lista tmux detecta o agente e sugere seu estado
-(trabalhando, esperando input ou ociosa) a partir da tela e da CPU do pane
-entre duas leituras; o terminal web e o
+`smtp.env` não existir. Com `webpush.env`, cada dispositivo pode ativar
+notificações push na visão geral (§Web Push). A lista tmux detecta o agente e
+sugere seu estado (trabalhando, esperando input ou ociosa) a partir da tela e
+da CPU do pane entre duas leituras; o terminal web e o
 attach ficam para `v0.2`, conforme a especificação. A interface não afirma
 que um host está saudável antes da primeira leitura.
 
@@ -36,8 +37,8 @@ A leitura é opcional: o `config.example.json` não traz `file_roots`. Sem
 `file_roots`, a leitura fica desativada e a aba não aparece.
 
 O painel pode ser instalado na tela inicial como PWA pelo navegador. O service
-worker guarda somente a interface estática; chamadas
-`/api/` continuam na rede e nunca são servidas do cache. Sem conexão, o
+worker guarda somente a interface estática e exibe as notificações push;
+chamadas `/api/` continuam na rede e nunca são servidas do cache. Sem conexão, o
 painel não apresenta uma leitura antiga como estado atual.
 
 ## Desenvolver
@@ -442,6 +443,39 @@ pendentes permanecem na tabela `alerts` com `sent_at=0`.
 Em 2026-09-26, o peer apareceu online na tailnet, mas conexões às portas 587
 e 465 expiraram a partir do `intrador-tech-vps`. Verifique o serviço e o
 firewall no host de e-mail antes de configurar `smtp.env`.
+
+## Web Push
+
+Notificações push usam VAPID (RFC 8292) e payload cifrado `aes128gcm`
+(RFC 8291), implementados com a biblioteca padrão do Go. Gere as chaves uma
+vez, como `vpsdash`, informando um contato `mailto:` ou `https:` para os
+serviços de push:
+
+```bash
+sudo -iu vpsdash /home/vpsdash/bin/vpsdash init-webpush -subject mailto:voce@example.com
+```
+
+O comando escreve `/home/vpsdash/.config/vpsdash/webpush.env` com modo `0600`
+(`VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`) e se recusa a
+sobrescrever um arquivo existente: chaves novas invalidam todas as inscrições.
+Reinicie o serviço. Sem o arquivo, o painel mostra "Chaves VAPID não
+configuradas"; outro caminho pode ser passado com `-webpush-env`.
+
+Em **Visão geral → Canais de alerta**, use **Ativar notificações** em cada
+dispositivo e **Enviar teste** para confirmar a entrega. Web Push exige HTTPS
+(o proxy público ou o Tailscale Serve já atendem). No iPhone e no iPad,
+adicione o painel à tela inicial e ative por lá; o Safari comum não recebe
+push. O painel informa quando o navegador não oferece suporte ou quando a
+permissão foi negada.
+
+Roteamento por severidade: falha de projeto monitorado (`project_down`) e
+unit de runner offline (`runner_offline`) seguem por e-mail e push; agente
+esperando input (`agent_waiting`, quando uma sessão passa ao estado
+`waiting`) vai só por push. Cada evento vira uma entrega por dispositivo em
+`push_deliveries`; falhas temporárias (rede, 429, 5xx) são repetidas com
+espera exponencial de 30 s até 1 h, por até oito tentativas; respostas 404 ou
+410 removem a inscrição. O servidor só envia para os serviços de push dos
+navegadores (FCM, Mozilla, Apple, Windows), sem seguir redirecionamentos.
 
 ## gh-agents
 
