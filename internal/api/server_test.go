@@ -19,7 +19,10 @@ import (
 	"github.com/heliowap/vpsdash/internal/web"
 )
 
-type fakeGitHub struct{ updates []string }
+type fakeGitHub struct {
+	noJobLogs
+	updates []string
+}
 
 type countingFileSystem struct {
 	base  http.FileSystem

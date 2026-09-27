@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import {
   Activity, AlertCircle, ArrowUpRight, Boxes, Check, ChevronDown, ChevronRight,
@@ -6,7 +6,7 @@ import {
   Terminal, Wifi
 } from 'lucide-react'
 import { api, ApiError } from './api'
-import type { Dashboard, IncidentHistory, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session } from './types'
+import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session } from './types'
 
 type Tab = 'overview' | 'projects' | 'fleet' | 'sessions'
 type Notice = { kind: 'error' | 'success'; message: string } | null
@@ -473,12 +473,13 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
     catch (err) { setFeedback({ kind: 'error', message: err instanceof Error ? err.message : 'Alteração não aplicada.' }) }
     finally { setBusy(false); setBulkPending(false) }
   }
-  return <div className="page-body"><div className="page-title"><h1>Frota</h1><p>Runners, fila e backends operados pelas variáveis que os workflows já leem.</p></div>
+  return <div className="page-body"><div className="page-title"><h1>Frota</h1><p>Runners, fila, logs de execução e backends operados pelas variáveis que os workflows já leem.</p></div>
     {!data.repositories.length ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">Adicione repositórios ao inventário para iniciar a leitura de runners e fila.</div></section> : !fleetObserved ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">{fleetErrors ? 'GitHub App indisponível. Runners e fila ainda são desconhecidos.' : 'Aguardando a primeira leitura do GitHub App. Runners e fila ainda são desconhecidos.'}</div></section> : <>
       {fleetUncertain && <p className="notice notice-error" role="alert"><AlertCircle size={18} />Leitura da frota parcial ou desatualizada. Confirme o estado antes de agir.</p>}
       <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
       <section className="ledger-section"><div className="section-heading"><h2>Fila</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}`}</span></div>{queue.length ? <div className="ruled-list">{queue.map(run => <a className="queue-row" key={`${run.repo}-${run.id}`} href={run.html_url} target="_blank" rel="noreferrer"><Clock3 size={18} /><span><strong>{run.display_title || run.name}</strong><small>{run.repo}</small></span><ArrowUpRight size={17} /></a>)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual da fila não está disponível.' : 'Nenhum job aguardando runner.'}</div>}</section>
     </>}
+    {data.repositories.length > 0 && <Executions />}
     <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui. Os minutos são um proxy para comparar backends, não a cobrança do GitHub.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className={`state-stamp ${switchError(repo) ? 'stamp-bad' : 'stamp-unknown'}`}>{switchError(repo) || repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoMinutesBlock repo={repo} state={minutes} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
     {hasOperations && <>
       <section className="ledger-section">
@@ -510,6 +511,144 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
     </>}
     {feedback && <p className={'notice notice-' + feedback.kind} role={feedback.kind === 'error' ? 'alert' : 'status'}>{feedback.kind === 'error' ? <AlertCircle size={18} /> : <Check size={18} />}{feedback.message}</p>}
   </div>
+}
+
+function jobState(job: Job): { label: string; tone: '' | 'stamp-bad' | 'stamp-unknown'; dot: string } {
+  if (job.status === 'in_progress') return { label: 'Em execução', tone: '', dot: 'is-good' }
+  if (job.status !== 'completed') return { label: 'Na fila', tone: 'stamp-unknown', dot: 'is-unknown' }
+  switch (job.conclusion) {
+    case 'success': return { label: 'Sucesso', tone: '', dot: 'is-good' }
+    case 'failure': return { label: 'Falhou', tone: 'stamp-bad', dot: 'is-bad' }
+    case 'timed_out': return { label: 'Tempo esgotado', tone: 'stamp-bad', dot: 'is-bad' }
+    case 'cancelled': return { label: 'Cancelado', tone: 'stamp-unknown', dot: 'is-unknown' }
+    case 'skipped': return { label: 'Ignorado', tone: 'stamp-unknown', dot: 'is-unknown' }
+    default: return { label: 'Concluído', tone: 'stamp-unknown', dot: 'is-unknown' }
+  }
+}
+
+function clockTime(timestamp: number) {
+  return new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function byteSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`
+}
+
+// Runner lines start with an ISO timestamp; show it as local wall-clock time.
+function readableLog(text: string) {
+  return text.replace(/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?Z /gm, (_, iso: string) => {
+    const at = new Date(iso + 'Z')
+    return Number.isNaN(at.getTime()) ? iso + ' ' : at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' '
+  })
+}
+
+function LogSheet({ job, onClose, onJob }: { job: Job; onClose: () => void; onJob: (job: Job) => void }) {
+  const [result, setResult] = useState<JobLog | null>(null)
+  const [error, setError] = useState('')
+  const [hidden, setHidden] = useState(() => document.hidden)
+  const [stopped, setStopped] = useState(false)
+  const outputRef = useRef<HTMLPreElement>(null)
+  const follow = useRef(true)
+  const complete = result?.complete ?? false
+
+  useEffect(() => {
+    const onVisibility = () => setHidden(document.hidden)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
+
+  useEffect(() => {
+    if (hidden || complete || stopped) return
+    const controller = new AbortController()
+    let timer = 0
+    let active = true
+    async function poll() {
+      try {
+        const next = await api.jobLog(job.repo, job.id, controller.signal)
+        if (!active) return
+        setResult(next); setError(''); onJob(next.job)
+        if (!next.complete) timer = window.setTimeout(poll, Math.max(2000, next.poll_after_ms || 5000))
+      } catch (err) {
+        if (!active || controller.signal.aborted) return
+        setError(err instanceof Error ? err.message : 'Não foi possível ler o log.')
+        if (err instanceof ApiError && [400, 401, 404].includes(err.status)) { setStopped(true); return }
+        timer = window.setTimeout(poll, 10_000)
+      }
+    }
+    void poll()
+    return () => { active = false; controller.abort(); window.clearTimeout(timer) }
+  }, [job.repo, job.id, hidden, complete, stopped, onJob])
+
+  const text = useMemo(() => readableLog(result?.log.text ?? ''), [result?.log.text])
+  useLayoutEffect(() => {
+    const output = outputRef.current
+    if (output && follow.current) output.scrollTop = output.scrollHeight
+  }, [text])
+
+  const current = result?.job ?? job
+  const state = jobState(current)
+  const log = result?.log
+  const status = stopped ? 'Atualização interrompida.' : complete ? 'Job concluído. Atualização encerrada.' : hidden ? 'Atualização pausada enquanto o painel está em segundo plano.' : 'Atualizando a cada 5 s enquanto esta vista estiver aberta.'
+  return <section className="log-sheet" aria-label={`Log do job ${current.name}`}>
+    <header>
+      <div><strong>Log · {current.name}</strong><small className="log-meta">{result ? `lido às ${clockTime(result.observed_at)}` : 'aguardando leitura'}{log?.state === 'ok' && log.size > 0 ? ` · ${byteSize(log.size)}` : ''}</small></div>
+      <span className={`state-stamp ${state.tone}`}>{state.label}</span>
+    </header>
+    <p className="log-status" role="status">{status}</p>
+    {error && <p className="form-error" role="alert"><AlertCircle size={15} />{error}</p>}
+    {!result && !error && <p className="log-placeholder">Buscando o log no GitHub…</p>}
+    {log && log.state !== 'ok' && <p className="log-placeholder">{log.message}</p>}
+    {log?.state === 'ok' && <>
+      {log.truncated && <p className="log-note">Mostrando só o fim do log (últimos 64 KB).</p>}
+      {text ? <pre className="log-output" ref={outputRef} tabIndex={0} aria-label="Fim do log" onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32 }}>{text}</pre> : <p className="log-placeholder">Log vazio até agora.</p>}
+    </>}
+    <div className="log-actions">
+      {current.html_url && <a className="button button-small" href={current.html_url} target="_blank" rel="noreferrer">Abrir no GitHub<ArrowUpRight size={15} /></a>}
+      <button className="button button-plain button-small" type="button" onClick={onClose}>Fechar log</button>
+    </div>
+  </section>
+}
+
+function Executions() {
+  const [list, setList] = useState<JobList | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState('')
+  const load = useCallback(async () => {
+    setLoading(true); setError('')
+    try { setList(await api.jobs()) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Execuções não lidas.') }
+    finally { setLoading(false) }
+  }, [])
+  useEffect(() => { void load() }, [load])
+  const updateJob = useCallback((next: Job) => setList(current => current && ({
+    ...current,
+    jobs: current.jobs.map(item => item.repo === next.repo && item.id === next.id ? { ...item, status: next.status, conclusion: next.conclusion, runner_name: next.runner_name || item.runner_name, completed_at: next.completed_at } : item)
+  })), [])
+  const repoErrors = Object.entries(list?.errors ?? {})
+  return <section className="ledger-section">
+    <div className="section-heading"><div><h2>Execuções</h2><p>Jobs em andamento e recentes. Abra um job para acompanhar o fim do log.</p></div><button className="button button-small" type="button" disabled={loading} onClick={() => void load()}><RefreshCw size={15} />{loading ? 'Lendo…' : 'Atualizar'}</button></div>
+    {error && <p className="notice notice-error" role="alert"><AlertCircle size={18} />{error}</p>}
+    {repoErrors.map(([repo, message]) => <p className="form-error job-list-error" key={repo}><AlertCircle size={15} />{repo}: {message}</p>)}
+    {!list ? !error && <div className="empty-line">Buscando execuções no GitHub…</div> : list.jobs.length ? <div className="ruled-list">{list.jobs.map(job => {
+      const key = `${job.repo}#${job.id}`
+      const expanded = open === key
+      const state = jobState(job)
+      const context = [job.repo, job.run_title || job.workflow, job.runner_name, job.started_at ? age(job.started_at) : ''].filter(Boolean).join(' · ')
+      return <article className="job-row" key={key}>
+        <button className="row-main" type="button" aria-expanded={expanded} onClick={() => setOpen(expanded ? '' : key)}>
+          <span className={`status-dot ${state.dot}`} />
+          <span className="row-copy"><strong>{job.name}</strong><small>{context}</small></span>
+          <span className={`state-stamp ${state.tone}`}>{state.label}</span>
+          {expanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+        </button>
+        {expanded && <LogSheet job={job} onClose={() => setOpen('')} onJob={updateJob} />}
+      </article>
+    })}</div> : <div className="empty-line">Nenhuma execução recente nos repositórios do inventário.</div>}
+    {list && <p className="muted-text job-list-time">Lista lida às {clockTime(list.observed_at)}.</p>}
+  </section>
 }
 
 function RunnerRow({ runner, uncertain }: { runner: Runner; uncertain: boolean }) {

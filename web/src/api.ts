@@ -1,4 +1,4 @@
-import type { Dashboard, IncidentHistory, Metric, MinutesReport } from './types'
+import type { Dashboard, IncidentHistory, JobList, JobLog, Metric, MinutesReport } from './types'
 
 export type SessionState = { authenticated: boolean; csrf: string }
 
@@ -32,5 +32,8 @@ export const api = {
     request<{ label: string }>(`/api/repos/${repo.split('/').map(encodeURIComponent).join('/')}/switch`, { method: 'POST', body: JSON.stringify({ variable, label }) }, csrf),
   bulkSwitch: (repositories: string[], variable: 'AGENT_RUNNER' | 'CI_RUNNER', label: string, csrf: string) =>
     request<{ results: Record<string, string> }>('/api/switches/bulk', { method: 'POST', body: JSON.stringify({ repositories, variable, label }) }, csrf),
+  jobs: () => request<JobList>('/api/jobs'),
+  jobLog: (repo: string, id: number, signal?: AbortSignal) =>
+    request<JobLog>(`/api/repos/${repo.split('/').map(encodeURIComponent).join('/')}/jobs/${id}/log`, { signal }),
   preset: (name: string, csrf: string) => request<{ results: Record<string, string> }>(`/api/presets/${name}`, { method: 'POST' }, csrf)
 }

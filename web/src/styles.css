@@ -208,6 +208,21 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
 .preset-row > div:first-child { display: grid; gap: 3px; }
 .preset-row strong { font-size: 14px; }
 .preset-confirm { display: flex; gap: 6px; }
+.job-row { border-bottom: 1px solid var(--rule); min-width: 0; }
+.job-row .row-main > svg { color: var(--muted); flex: none; }
+.job-list-error { margin-bottom: 10px; }
+.job-list-time { margin: 12px 0 0; }
+.section-heading > .button { flex: none; }
+.log-sheet { margin: 0 0 15px; padding: 0 18px 16px; border: 1px solid var(--rule); background: var(--raised); border-radius: 10px; display: grid; gap: 10px; min-width: 0; }
+.log-sheet header { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 15px; }
+.log-sheet header > div { display: grid; gap: 3px; min-width: 0; }
+.log-sheet header strong { font-size: 14px; overflow-wrap: anywhere; }
+.log-meta { font: 500 12px 'IBM Plex Mono', monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
+.log-status, .log-note, .log-placeholder { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.log-placeholder { padding: 14px; background: #ecefe9; border-radius: 8px; color: var(--ink); }
+.log-output { margin: 0; max-height: min(60vh, 540px); overflow: auto; overscroll-behavior: contain; padding: 12px 14px; background: #ecefe9; color: var(--ink); border-radius: 8px; font: 500 12px/1.6 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.log-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.log-actions a { text-decoration: none; }
 .info-note { display: flex; align-items: start; gap: 11px; color: var(--muted); font-size: 13px; padding-top: 24px; }
 .info-note p { margin: 0; line-height: 1.5; }
 .info-note code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
@@ -288,6 +303,9 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
   .minutes-measures span { text-align: left; }
   .minutes-measures b { font-size: 15px; }
   .preset-row { align-items: start; }
+  .log-sheet { padding-inline: 12px; }
+  .log-sheet header { align-items: flex-start; }
+  .log-output { max-height: 55vh; padding: 10px 11px; font-size: 11.5px; }
   .preset-confirm { flex-wrap: wrap; justify-content: flex-end; }
 }
 
