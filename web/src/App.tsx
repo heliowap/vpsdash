@@ -3,12 +3,13 @@ import type React from 'react'
 import {
   Activity, AlertCircle, ArrowUpRight, Boxes, Check, ChevronDown, ChevronRight,
   CircleHelp, Clock3, GitBranch, LockKeyhole, LogOut, RefreshCw,
-  Terminal, Wifi
+  FolderOpen, Terminal, Wifi
 } from 'lucide-react'
 import { api, ApiError } from './api'
 import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session, UnitOp } from './types'
+import { Files, type FileLocation } from './Files'
 
-type Tab = 'overview' | 'projects' | 'fleet' | 'sessions'
+type Tab = 'overview' | 'projects' | 'fleet' | 'sessions' | 'files'
 type Notice = { kind: 'error' | 'success'; message: string } | null
 
 const labels = ['self-hosted', 'ubuntu-latest', 'depot-ubuntu-24.04', 'depot-ubuntu-24.04-4', 'depot-ubuntu-24.04-8', 'ubicloud-standard-2']
@@ -21,7 +22,8 @@ const tabs: { id: Tab; label: string; Icon: typeof Activity }[] = [
   { id: 'overview', label: 'Visão geral', Icon: Activity },
   { id: 'projects', label: 'Projetos', Icon: Boxes },
   { id: 'fleet', label: 'Frota', Icon: GitBranch },
-  { id: 'sessions', label: 'Sessões', Icon: Terminal }
+  { id: 'sessions', label: 'Sessões', Icon: Terminal },
+  { id: 'files', label: 'Arquivos', Icon: FolderOpen }
 ]
 
 function age(timestamp?: number) {
@@ -804,6 +806,7 @@ export default function App() {
   const [data, setData] = useState<Dashboard | null>(null)
   const [histories, setHistories] = useState<Record<string, Metric[]>>({})
   const [tab, setTab] = useState<Tab>('overview')
+  const [fileLocation, setFileLocation] = useState<FileLocation>(null)
   const [notice, setNotice] = useState<Notice>(null)
   const [refreshing, setRefreshing] = useState(false)
   const refreshVersion = useRef(0)
@@ -861,18 +864,26 @@ export default function App() {
     try { await api.logout(session.csrf) } finally { setSession({ authenticated: false, csrf: '' }); setData(null); setHistories({}); historiesRef.current = {}; historyLoadedAt.current = {}; setRefreshing(false) }
   }
 
+  const expireSession = useCallback(() => {
+    ++refreshVersion.current
+    setSession({ authenticated: false, csrf: '' }); setData(null); setHistories({}); historiesRef.current = {}; historyLoadedAt.current = {}; setRefreshing(false)
+  }, [])
+  const hasFiles = Boolean(data && Object.keys(data.file_roots || {}).length)
+  const visibleTabs = hasFiles ? tabs : tabs.filter(item => item.id !== 'files')
+  const current: Tab = tab === 'files' && !hasFiles ? 'overview' : tab
+
   if (!session) return <div className="boot-screen"><div className="boot-mark"><Activity size={23} /> vpsdash</div><span>Carregando painel…</span></div>
   if (!session.authenticated) return <Login onLogin={csrf => setSession({ authenticated: true, csrf })} />
 
   return <div className="app-shell">
-    <aside className="side-rail"><div className="brand"><span className="brand-icon"><Activity size={19} strokeWidth={2.5} /></span><span>vpsdash</span></div><nav aria-label="Seções do painel">{tabs.map(({ id, label, Icon }) => <button key={id} type="button" className={`nav-item ${tab === id ? 'active' : ''}`} onClick={() => setTab(id)} aria-current={tab === id ? 'page' : undefined}><Icon size={19} /><span>{label}</span></button>)}</nav><div className="rail-foot"><span className="rail-label">ACESSO AUTENTICADO</span><span>HTTPS · operador único</span></div></aside>
+    <aside className="side-rail"><div className="brand"><span className="brand-icon"><Activity size={19} strokeWidth={2.5} /></span><span>vpsdash</span></div><nav aria-label="Seções do painel">{visibleTabs.map(({ id, label, Icon }) => <button key={id} type="button" className={`nav-item ${current === id ? 'active' : ''}`} onClick={() => setTab(id)} aria-current={current === id ? 'page' : undefined}><Icon size={19} /><span>{label}</span></button>)}</nav><div className="rail-foot"><span className="rail-label">ACESSO AUTENTICADO</span><span>HTTPS · operador único</span></div></aside>
     <div className="main-wrap"><header className="top-bar"><div className="mobile-brand"><Activity size={19} strokeWidth={2.5} /><strong>vpsdash</strong></div><div className="top-context"><span className="top-context-title">Central de comando</span><span className="top-context-sub">Observação em tempo real</span></div><div className="top-actions"><button className={`icon-button ${refreshing ? 'is-spinning' : ''}`} type="button" onClick={() => void refresh()} aria-label="Atualizar dados" title="Atualizar dados"><RefreshCw size={19} /></button><button className="icon-button" type="button" onClick={() => void logout()} aria-label="Sair" title="Sair"><LogOut size={19} /></button></div></header>
       <main className="content"><div className="content-inner">
         {notice && <div className={`notice notice-${notice.kind}`} role="alert"><AlertCircle size={18} />{notice.message}</div>}
-        {data ? tab === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} /> : tab === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : tab === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
-        {data && !data.smtp_provisioned && tab !== 'overview' && <div className="service-note"><AlertCircle size={16} /><span>Canal de alerta por e-mail não provisionado. Eventos ficam enfileirados.</span></div>}
+        {data ? current === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} /> : current === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : current === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : current === 'files' ? <Files roots={data.file_roots || {}} location={fileLocation} onNavigate={setFileLocation} onUnauthorized={expireSession} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
+        {data && !data.smtp_provisioned && current !== 'overview' && <div className="service-note"><AlertCircle size={16} /><span>Canal de alerta por e-mail não provisionado. Eventos ficam enfileirados.</span></div>}
       </div></main>
     </div>
-    <nav className="bottom-nav" aria-label="Seções do painel">{tabs.map(({ id, label, Icon }) => <button key={id} type="button" className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}><Icon size={20} strokeWidth={tab === id ? 2.3 : 1.8} /><span>{label}</span></button>)}</nav>
+    <nav className="bottom-nav" aria-label="Seções do painel">{visibleTabs.map(({ id, label, Icon }) => <button key={id} type="button" className={current === id ? 'active' : ''} aria-current={current === id ? 'page' : undefined} onClick={() => setTab(id)}><Icon size={20} strokeWidth={current === id ? 2.3 : 1.8} /><span>{label}</span></button>)}</nav>
   </div>
 }
