@@ -37,8 +37,10 @@ tmux list-panes -a -F '#{session_name}	#{pane_pid}	#{pane_current_command}	#{pan
 printf '%s\n' '--PROCESSES--'
 ps -eo pid=,ppid=,stat=,times=,comm=,args=
 printf '%s\n' '--SCREENS--'
-for pane in $(tmux list-panes -a -F '#{pane_id}' 2>/dev/null); do
-  screen=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || continue
+deadline=$(($(date +%s) + 4))
+for pane in $(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | head -n 50); do
+  [ "$(date +%s)" -lt "$deadline" ] || break
+  screen=$(timeout 1 tmux capture-pane -p -t "$pane" 2>/dev/null) || continue
   sum=$(printf '%s' "$screen" | cksum)
   last=$(printf '%s\n' "$screen" | awk 'NF { line = $0 } END { print substr(line, 1, 160) }')
   printf '%s\t%s\t%s\n' "$pane" "${sum%% *}" "$last"
