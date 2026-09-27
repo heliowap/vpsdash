@@ -2,13 +2,15 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type React from 'react'
 import {
   Activity, AlertCircle, ArrowUpRight, Bell, Boxes, Check, ChevronDown, ChevronRight,
-  CircleHelp, Clock3, GitBranch, LockKeyhole, LogOut, Mail, RefreshCw,
+  Clock3, GitBranch, LockKeyhole, LogOut, Mail, RefreshCw,
   FolderOpen, Terminal, Wifi
 } from 'lucide-react'
 import { api, ApiError } from './api'
 import { disablePush, enablePush, forgetLocalSubscription, readPushState, type PushSnapshot } from './push'
 import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session, UnitOp } from './types'
 import { Files, type FileLocation } from './Files'
+import { AuditLedger, InteractiveSessions, PublicRouteNote } from './Interactive'
+import { agentStateLabel } from './sessionState'
 
 type Tab = 'overview' | 'projects' | 'fleet' | 'sessions' | 'files'
 type Notice = { kind: 'error' | 'success'; message: string } | null
@@ -858,18 +860,18 @@ function RunnerRow({ runner, uncertain, planned }: { runner: Runner; uncertain: 
   return <div className="runner-row"><span className={`status-dot ${uncertain || plannedStop ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain || plannedStop ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : plannedStop ? planned === 'drain' ? 'Drenado' : planned === 'unconfirmed' ? 'Não confirmado' : 'Reiniciando' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
 }
 
-const agentStateLabels: Record<string, string> = { working: 'Trabalhando', waiting: 'Esperando input', idle: 'Ociosa' }
-
-function agentStateLabel(session: Session) {
-  return (session.agent && session.state && agentStateLabels[session.state]) || 'Observada'
-}
-
-function Sessions({ data, refreshFailed }: { data: Dashboard; refreshFailed: boolean }) {
+function Sessions({ data, csrf, refreshFailed }: { data: Dashboard; csrf: string; refreshFailed: boolean }) {
   const collectionUncertain = !sessionCollectionCurrent(data, refreshFailed)
-  return <div className="page-body"><div className="page-title"><h1>Sessões</h1><p>tmux mantém seus agentes vivos no host. O processo em cada pane identifica o agente; tela e CPU entre duas leituras sugerem se ele trabalha, espera input ou está ocioso.</p></div><section className="ledger-section"><div className="section-heading"><h2>Últimas sessões observadas</h2><span className="section-count">{data.sessions.length}</span></div>{data.sessions.length ? <div className="ruled-list">{data.sessions.map((session: Session) => {
-    const uncertain = refreshFailed || sessionUncertain(session, data)
-    return <div className="session-row" key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {uncertain ? 'última leitura ' : ''}{age(session.seen_at)}</small></div><span className={`state-stamp ${uncertain ? 'stamp-unknown' : ''}`}>{uncertain ? 'Não confirmado' : agentStateLabel(session)}</span></div>
-  })}</div> : <div className="empty-line">{collectionUncertain ? 'Coleta de sessões indisponível. Ainda não há uma leitura confirmada.' : 'Nenhuma sessão tmux observada. As sessões aparecem quando os hosts forem alcançados.'}</div>}</section><div className="info-note"><CircleHelp size={18} /><p>O acesso ao terminal requer a chave SSH de leitura do usuário <code>vpsdash</code> no host de cada sessão.</p></div></div>
+  const uncertain = (session: Session) => refreshFailed || sessionUncertain(session, data)
+  if (data.private) return <div className="page-body"><div className="page-title"><h1>Sessões e acesso</h1><p>tmux mantém seus agentes vivos no host. Pela tailnet, você abre o terminal, acompanha uma sessão ou executa um comando fixo do inventário.</p></div>
+    <InteractiveSessions data={data} csrf={csrf} uncertain={uncertain} age={age} /></div>
+  return <div className="page-body"><div className="page-title"><h1>Sessões</h1><p>tmux mantém seus agentes vivos no host. O processo em cada pane identifica o agente; tela e CPU entre duas leituras sugerem se ele trabalha, espera input ou está ocioso.</p></div>
+    <PublicRouteNote />
+    <section className="ledger-section"><div className="section-heading"><h2>Últimas sessões observadas</h2><span className="section-count">{data.sessions.length}</span></div>{data.sessions.length ? <div className="ruled-list">{data.sessions.map((session: Session) => {
+    const unsure = uncertain(session)
+    return <div className="session-row" key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {unsure ? 'última leitura ' : ''}{age(session.seen_at)}</small></div><span className={`state-stamp ${unsure ? 'stamp-unknown' : ''}`}>{unsure ? 'Não confirmado' : agentStateLabel(session)}</span></div>
+  })}</div> : <div className="empty-line">{collectionUncertain ? 'Coleta de sessões indisponível. Ainda não há uma leitura confirmada.' : 'Nenhuma sessão tmux observada. As sessões aparecem quando os hosts forem alcançados.'}</div>}</section>
+    <AuditLedger refreshKey={0} /></div>
 }
 
 export default function App() {
@@ -966,11 +968,11 @@ export default function App() {
   if (!session.authenticated) return <Login onLogin={csrf => setSession({ authenticated: true, csrf })} />
 
   return <div className="app-shell">
-    <aside className="side-rail"><div className="brand"><span className="brand-icon"><Activity size={19} strokeWidth={2.5} /></span><span>vpsdash</span></div><nav aria-label="Seções do painel">{visibleTabs.map(({ id, label, Icon }) => <button key={id} type="button" className={`nav-item ${current === id ? 'active' : ''}`} onClick={() => setTab(id)} aria-current={current === id ? 'page' : undefined}><Icon size={19} /><span>{label}</span></button>)}</nav><div className="rail-foot"><span className="rail-label">ACESSO AUTENTICADO</span><span>HTTPS · operador único</span></div></aside>
+    <aside className="side-rail"><div className="brand"><span className="brand-icon"><Activity size={19} strokeWidth={2.5} /></span><span>vpsdash</span></div><nav aria-label="Seções do painel">{visibleTabs.map(({ id, label, Icon }) => <button key={id} type="button" className={`nav-item ${current === id ? 'active' : ''}`} onClick={() => setTab(id)} aria-current={current === id ? 'page' : undefined}><Icon size={19} /><span>{label}</span></button>)}</nav><div className="rail-foot"><span className="rail-label">{data?.private ? 'ROTA PRIVADA' : 'ACESSO AUTENTICADO'}</span><span>{data?.private ? 'Tailscale · terminal liberado' : 'HTTPS · operador único'}</span></div></aside>
     <div className="main-wrap"><header className="top-bar"><div className="mobile-brand"><Activity size={19} strokeWidth={2.5} /><strong>vpsdash</strong></div><div className="top-context"><span className="top-context-title">Central de comando</span><span className="top-context-sub">Observação em tempo real</span></div><div className="top-actions"><button className={`icon-button ${refreshing ? 'is-spinning' : ''}`} type="button" onClick={() => void refresh()} aria-label="Atualizar dados" title="Atualizar dados"><RefreshCw size={19} /></button><button className="icon-button" type="button" onClick={() => void logout()} aria-label="Sair" title="Sair"><LogOut size={19} /></button></div></header>
       <main className="content"><div className="content-inner">
         {notice && <div className={`notice notice-${notice.kind}`} role="alert"><AlertCircle size={18} />{notice.message}</div>}
-        {data ? current === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} csrf={session.csrf} /> : current === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : current === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : current === 'files' ? <Files roots={data.file_roots || {}} location={fileLocation} onNavigate={setFileLocation} onUnauthorized={expireSession} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
+        {data ? current === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} csrf={session.csrf} /> : current === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : current === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : current === 'files' ? <Files roots={data.file_roots || {}} location={fileLocation} onNavigate={setFileLocation} onUnauthorized={expireSession} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} csrf={session.csrf} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
         {data && !data.smtp_provisioned && current !== 'overview' && <div className="service-note"><AlertCircle size={16} /><span>Canal de alerta por e-mail não provisionado. Eventos ficam enfileirados.</span></div>}
       </div></main>
     </div>
