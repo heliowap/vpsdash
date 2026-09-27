@@ -69,6 +69,26 @@ ON CONFLICT(host_id,name) DO UPDATE SET pane_pid=excluded.pane_pid,cwd=excluded.
 	return err
 }
 
+// ReplaceSessions records a complete successful snapshot for one host. A
+// failed collector poll never calls this method, so its last snapshot remains.
+func (s *Store) ReplaceSessions(ctx context.Context, hostID string, sessions []Session, at time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM tmux_sessions WHERE host_id=?`, hostID); err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tmux_sessions(host_id,name,pane_pid,cwd,agent,state,seen_at) VALUES (?,?,?,?,?,?,?)`,
+			hostID, session.Name, session.PanePID, session.CWD, session.Agent, session.State, at.Unix()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT host_id,name,COALESCE(pane_pid,0),COALESCE(cwd,''),COALESCE(agent,''),COALESCE(state,''),seen_at FROM tmux_sessions ORDER BY host_id,name`)
 	if err != nil {

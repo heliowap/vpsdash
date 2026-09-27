@@ -13,8 +13,8 @@ for path in "$HOME"/.config/systemd/user/actions.runner.*.service; do
   printf '%s\t%s\t%s\n' "$unit" "$load" "$state"
 done
 unit=gh-agents-cleanup.timer
-load=$(systemctl --user show "$unit" --property=LoadState --value)
-state=$(systemctl --user show "$unit" --property=ActiveState --value)
+load=$(systemctl --user show "$unit" --property=LoadState --value 2>/dev/null || printf 'not-found')
+state=$(systemctl --user show "$unit" --property=ActiveState --value 2>/dev/null || printf 'inactive')
 printf '%s\t%s\t%s\n' "$unit" "$load" "$state"
 `
 

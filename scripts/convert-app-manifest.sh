@@ -3,6 +3,8 @@
 set -euo pipefail
 
 target_dir="${1:-/home/vpsdash/.config/vpsdash}"
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+api_version="$(<"$repo_dir/internal/githubapp/api-version.txt")"
 operator=helio
 operator_home="$(getent passwd "$operator" | cut -d: -f6)"
 
@@ -63,7 +65,7 @@ request = urllib.request.Request(
     data=b"",
     method="POST",
     headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer " + token,
-             "X-GitHub-Api-Version": "2026-03-10"},
+             "X-GitHub-Api-Version": sys.argv[2]},
 )
 try:
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -72,7 +74,7 @@ except urllib.error.HTTPError as error:
     raise SystemExit("Falha ao converter o manifesto: HTTP " + str(error.code))
 except urllib.error.URLError:
     raise SystemExit("Falha de rede ao converter o manifesto.")
-' "$operator_gh" > "$temp_dir/response.json"
+' "$operator_gh" "$api_version" > "$temp_dir/response.json"
 jq -er '.pem | strings' "$temp_dir/response.json" > "$temp_dir/github-app.pem"
 app_id="$(jq -er '.id | numbers' "$temp_dir/response.json")"
 cat > "$temp_dir/github-app.env" <<EOF

@@ -45,6 +45,46 @@ func TestParseRunnerUnits(t *testing.T) {
 	}
 }
 
+func TestRunnerUnitsScriptReportsRunnersWhenCleanupTimerIsMissing(t *testing.T) {
+	home := t.TempDir()
+	unitsDir := filepath.Join(home, ".config", "systemd", "user")
+	if err := os.MkdirAll(unitsDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	name := "actions.runner.owner-repo.owner--repo-1.service"
+	if err := os.WriteFile(filepath.Join(unitsDir, name), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(home, "bin")
+	if err := os.Mkdir(bin, 0700); err != nil {
+		t.Fatal(err)
+	}
+	fake := "#!/bin/sh\nif [ \"$2\" = show-environment ]; then exit 0; fi\nif [ \"$3\" = gh-agents-cleanup.timer ]; then exit 1; fi\ncase \"$4\" in --property=LoadState) echo loaded;; --property=ActiveState) echo active;; esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte(fake), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", RunnerUnitsScript)
+	cmd.Env = append(os.Environ(), "HOME="+home, "PATH="+bin+":/usr/bin:/bin")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("runner snapshot failed: %v: %s", err, output)
+	}
+	units, err := ParseRunnerUnits(string(output))
+	if err != nil || !units[name].Healthy() || units["gh-agents-cleanup.timer"].LoadState != "not-found" {
+		t.Fatalf("runner snapshot = %+v, %v: %s", units, err, output)
+	}
+}
+
+func TestRunnerUnitLoopReportsUnknownHost(t *testing.T) {
+	c := New(config.Config{}, nil, nil)
+	defer c.Close()
+	c.runnerUnitLoop(context.Background(), config.RunnerUnitHost{HostID: "missing"})
+	_, errors, _ := c.Snapshot()
+	if !strings.Contains(errors["runner-units:missing"], "unknown runner unit host") {
+		t.Fatalf("missing lock was not reported: %+v", errors)
+	}
+}
+
 func TestRunnerUnitFixtureSanitizer(t *testing.T) {
 	raw := "actions.runner.private-repo.owner--repo-1.service\tloaded\tactive\ngh-agents-cleanup.timer\tloaded\tactive\n"
 	cmd := exec.Command("awk", "-f", filepath.Join("..", "..", "scripts", "sanitize-runner-units.awk"))

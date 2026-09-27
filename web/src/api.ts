@@ -27,9 +27,8 @@ export const api = {
   updateProject: (id: number, body: { monitored: boolean; health_url: string; expected: string[] }, csrf: string) =>
     request<{ saved: boolean }>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }, csrf),
   switchRunner: (repo: string, variable: 'AGENT_RUNNER' | 'CI_RUNNER', label: string, csrf: string) =>
-    request<{ label: string }>(`/api/repos/${repo}/switch`, { method: 'POST', body: JSON.stringify({ variable, label }) }, csrf),
+    request<{ label: string }>(`/api/repos/${repo.split('/').map(encodeURIComponent).join('/')}/switch`, { method: 'POST', body: JSON.stringify({ variable, label }) }, csrf),
   bulkSwitch: (repositories: string[], variable: 'AGENT_RUNNER' | 'CI_RUNNER', label: string, csrf: string) =>
     request<{ results: Record<string, string> }>('/api/switches/bulk', { method: 'POST', body: JSON.stringify({ repositories, variable, label }) }, csrf),
-  preset: (name: string, csrf: string) => request<{ results: Record<string, string> }>(`/api/presets/${name}`, { method: 'POST' }, csrf),
-  rerun: (repo: string, id: number, csrf: string) => request<{ requested: boolean }>(`/api/repos/${repo}/rerun/${id}`, { method: 'POST' }, csrf)
+  preset: (name: string, csrf: string) => request<{ results: Record<string, string> }>(`/api/presets/${name}`, { method: 'POST' }, csrf)
 }

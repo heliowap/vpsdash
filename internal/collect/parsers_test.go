@@ -2,6 +2,7 @@ package collect
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +31,16 @@ func TestParseMetricsSnapshot(t *testing.T) {
 	}
 	if s.UptimeSeconds != 3883193 {
 		t.Errorf("uptime = %d", s.UptimeSeconds)
+	}
+}
+
+func TestParseMetricsSnapshotWithWrappedFilesystemName(t *testing.T) {
+	raw := strings.Replace(fixture(t, "metrics.txt"),
+		"/dev/sda1        202051056 39281196 162753476      20% /",
+		"/dev/mapper/very-long-root-filesystem-name\n202051056 39281196 162753476 20% /subvolume", 1)
+	snapshot, err := ParseMetricsSnapshot(raw)
+	if err != nil || snapshot.DiskPct < 19.43 || snapshot.DiskPct > 19.45 {
+		t.Fatalf("wrapped df output = %+v, %v", snapshot, err)
 	}
 }
 

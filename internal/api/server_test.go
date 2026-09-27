@@ -25,7 +25,6 @@ func (f *fakeGitHub) SetVariable(_ context.Context, repo, name, value string) er
 	f.updates = append(f.updates, repo+":"+name+"="+value)
 	return nil
 }
-func (f *fakeGitHub) Rerun(context.Context, string, int64) error { return nil }
 
 func TestAuthAndSwitchFlow(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "vpsdash.db"))
@@ -305,5 +304,79 @@ func TestEmbeddedPWAAssets(t *testing.T) {
 				t.Fatal("embedded icon is not a PNG")
 			}
 		})
+	}
+}
+
+func TestPublicHandlerLimitsBodiesAndMethods(t *testing.T) {
+	a, err := auth.New("$argon2id$test", []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(config.Config{}, nil, nil, nil, a)
+	s.Static = http.FS(web.Dist())
+	h := s.Handler()
+	for _, tc := range []struct {
+		method, path, body string
+		want               int
+	}{
+		{http.MethodPost, "/api/login", `{"password":"` + strings.Repeat("x", 33<<10) + `"}`, http.StatusBadRequest},
+		{http.MethodPost, "/api/login", `{"password":"wrong"}{"password":"again"}`, http.StatusBadRequest},
+		{http.MethodPost, "/missing", "", http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api", "", http.StatusUnauthorized},
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+		if w.Code != tc.want {
+			t.Fatalf("%s %s = %d, want %d", tc.method, tc.path, w.Code, tc.want)
+		}
+	}
+}
+
+func TestProjectRejectsLoopbackHealthURL(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "vpsdash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.UpsertHost(ctx, store.Host{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCandidate(ctx, "vps", "example.service", "systemd"); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := st.Projects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("projects = %+v, %v", projects, err)
+	}
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := auth.New(hash, []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Hosts: []config.Host{{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps"}}}
+	h := New(cfg, st, nil, nil, a).Handler()
+	login := httptest.NewRecorder()
+	h.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password":"correct horse battery staple"}`)))
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	var session struct {
+		CSRF string `json:"csrf"`
+	}
+	if err := json.Unmarshal(login.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPatch, "/api/projects/"+strconv.FormatInt(projects[0].ID, 10),
+		strings.NewReader(`{"monitored":true,"health_url":"http://127.0.0.1:8484/healthz"}`))
+	r.AddCookie(login.Result().Cookies()[0])
+	r.Header.Set("X-CSRF-Token", session.CSRF)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("private health URL = %d: %s", w.Code, w.Body.String())
 	}
 }

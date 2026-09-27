@@ -33,6 +33,7 @@ permissions:
 
 jobs:
   agents:
+    # gh-agents releases the deliberately moved @v1 tag as its caller contract.
     uses: heliowap/gh-agents/.github/workflows/agents.yml@v1
     # Only trusted PR commands enter concurrency. Otherwise an unrelated
     # comment can replace a pending /oc request; plain issues never run fix.
@@ -71,7 +72,7 @@ jobs:
     # zero-retention model while retaining the paid model as the first choice.
     with:
       model_fallbacks: opencode/space-bunny-free
-      # runs-on: self-hosted        # default; vars.AGENT_RUNNER overrides per repo
+      runs-on: ${{ vars.AGENT_RUNNER || 'ubuntu-latest' }}
       # model: opencode-go/glm-5.3-flash
       # use_container: true         # false = run on host (tests needing Docker)
       # ci_workflows: 'ci,qe'       # empty = all; widen `workflows:` above to match

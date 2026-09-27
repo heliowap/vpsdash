@@ -169,6 +169,7 @@ func TestUnavailableProjectProbeDoesNotQueueDownAlert(t *testing.T) {
 	}))
 	defer server.Close()
 	p.HealthURL = server.URL
+	c.healthHTTP = newHealthHTTPClient([]config.Host{{TailnetName: "127.0.0.1"}})
 	for i := 0; i < 3; i++ {
 		c.checkProject(ctx, h, p)
 	}
@@ -190,13 +191,14 @@ func TestHTTPHealthConnectionFailureIsAConfirmedFailure(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	url := server.URL
 	server.Close()
-	ok, detail, err := checkHTTP(context.Background(), url)
+	client := newHealthHTTPClient([]config.Host{{TailnetName: "127.0.0.1"}})
+	ok, detail, err := checkHTTP(context.Background(), client, url)
 	if err != nil || ok || detail == "" {
 		t.Fatalf("unreachable health URL = ok:%t detail:%q err:%v", ok, detail, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, err = checkHTTP(ctx, url)
+	_, _, err = checkHTTP(ctx, client, url)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled collector probe = %v, want context cancellation", err)
 	}

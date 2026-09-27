@@ -57,9 +57,12 @@ configura os coletores SSH locais e remotos, grava o secret
 `OPENCODE_API_KEY` no repositório, acompanha o registro e a instalação do
 GitHub App, testa TLS e autenticação SMTP e publica o painel por Tailscale
 Serve. Ele preserva credenciais já existentes e pode ser executado de novo
-se alguma etapa ficar pendente. Para os hosts remotos, obtenha o fingerprint
-Ed25519 no console do próprio host antes de informá-lo ao assistente.
-Nesse console, execute
+se alguma etapa ficar pendente. Ele lê as VPSs remotas do inventário privado
+e identifica o host local pelo DNS do Tailscale; ajuste `config.json` antes
+de executá-lo para uma frota diferente da configuração de exemplo.
+
+Para os hosts remotos, obtenha o fingerprint Ed25519 no console do próprio
+host antes de informá-lo ao assistente. Nesse console, execute
 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256` e copie somente
 o trecho `SHA256:...` da saída. Se não tiver acesso ao console naquele momento,
 pressione Enter no campo do fingerprint para manter apenas a presença
@@ -95,6 +98,12 @@ usuários SSH e liste somente repositórios instalados no GitHub App. Defina
 que o workflow daquele repositório contém `vars.AGENT_RUNNER || ...` ou
 `vars.CI_RUNNER || ...`, respectivamente. Repositórios sem esse contrato não
 recebem o controle de troca no painel.
+
+Uma URL de health pode apontar para um endereço público ou para o nome DNS
+de um host presente no inventário. Destinos privados só são aceitos quando
+o hostname consta do inventário; redirecionamentos para outro host são
+recusados. A regra vale ao salvar e na coleta. Para serviços internos, use
+o DNS da tailnet do host ou o check de serviços esperados.
 
 Como `vpsdash`, gere a senha e a chave de sessão:
 
@@ -187,6 +196,7 @@ de bloco Caddy (troque o domínio pelo seu):
 ```caddyfile
 app.example.com {
     encode gzip zstd
+    header Strict-Transport-Security "max-age=31536000"
     reverse_proxy 127.0.0.1:8484 {
         header_up X-Real-IP {remote_host}
     }
@@ -210,7 +220,7 @@ pode coexistir com a pública; não use Tailscale Funnel para expor outra rota.
 
 ## GitHub App `gh-agents-ops`
 
-`app-manifest.json` pede `actions:write`, `administration:write`,
+`app-manifest.json` pede `actions:read`, `administration:write`,
 `actions_variables:write`, `organization_self_hosted_runners:write` e
 `organization_actions_variables:write`. Não pede `contents` nem `issues`.
 Metadata é implícita. Sem webhook ativo.
@@ -258,6 +268,10 @@ firewall no host de e-mail antes de configurar `smtp.env`.
 
 `.github/workflows/agents.yml` chama
 `heliowap/gh-agents/.github/workflows/agents.yml@v1` desde o primeiro PR.
+O tag maior `@v1` é o contrato de release do workflow reutilizável e só é
+movido em uma release deliberada do `gh-agents`; as actions externas dentro
+dele continuam pinadas por SHA. O caller passa
+`vars.AGENT_RUNNER || 'ubuntu-latest'` e o callee respeita essa variável.
 Defina `OPENCODE_API_KEY` no repositório. Até haver um runner privado
 registrado para este repositório, defina `AGENT_RUNNER=ubuntu-latest`; depois
 o painel pode trocar para `self-hosted`. O CI usa
@@ -268,8 +282,11 @@ o painel pode trocar para `self-hosted`. O CI usa
 ```bash
 cd web && npm ci && npm run build && cd ..
 go test ./...
+go test -race ./...
+go vet ./...
 actionlint .github/workflows/*.yml
 shellcheck scripts/*.sh
+test -z "$(git status --porcelain -- internal/web/dist)"
 go build -o /tmp/vpsdash ./cmd/vpsdash
 /tmp/vpsdash --version
 ```

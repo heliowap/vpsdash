@@ -16,7 +16,7 @@ APPROVED_SCRIPTS = {
     "bd00bf9b9b1ce93a4d5fe8e7307e9af7f0bb72747fd5ef5183582545aa1ed724",  # discovery
     "65f9c354476d0e225f0e529734d1b8a7eee4130d5ec56f5376ad1844c073c82b",  # sessions
 }
-RUNNER_UNITS_DIGEST = "926eba140ff5db5714e56102804c6dbb09d05c8af70647a881ea44fbe818888c"
+RUNNER_UNITS_DIGEST = "0df33256bd3e5fae028dbebf0eaab5962e85c63a16187bf3ac06bfa55852d0d2"
 
 
 def environment():
@@ -54,7 +54,8 @@ def health(command):
         name = raw.decode("utf-8")
     except (ValueError, UnicodeDecodeError):
         return deny()
-    if not name or len(raw) > 256 or any(ord(char) < 32 for char in name):
+    target = name.removeprefix("user:") if source == "systemd" else name
+    if not name or not target or target.startswith("-") or len(raw) > 256 or any(ord(char) < 32 for char in name):
         return deny()
     if source == "systemd":
         args = ["systemctl", "is-active", name]

@@ -28,6 +28,19 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	return c
 }
 
+func TestNilClientReturnsErrorInsteadOfPanicking(t *testing.T) {
+	var client *Client
+	if _, err := client.Variable(context.Background(), "heliowap/vpsdash", "AGENT_RUNNER"); err == nil {
+		t.Fatal("nil client returned a GitHub variable")
+	}
+	if _, err := client.Runners(context.Background(), "heliowap/vpsdash"); err == nil {
+		t.Fatal("nil client returned runners")
+	}
+	if err := client.SetVariable(context.Background(), "heliowap/vpsdash", "AGENT_RUNNER", "ubuntu-latest"); err == nil {
+		t.Fatal("nil client changed a GitHub variable")
+	}
+}
+
 func TestSetVariableUsesInstallationTokenAndActionsVariableEndpoint(t *testing.T) {
 	var tokenRequests, updates int
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {

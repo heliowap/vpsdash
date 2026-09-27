@@ -147,7 +147,7 @@ func serve(args []string) error {
 	server := api.New(cfg, st, collector, gh, a)
 	server.SMTPProvisioned = mailer != nil
 	server.Static = http.FS(web.Dist())
-	httpServer := &http.Server{Addr: cfg.Listen, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	httpServer := &http.Server{Addr: cfg.Listen, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 90 * time.Second}
 	listener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return err

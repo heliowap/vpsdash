@@ -89,7 +89,7 @@ Isolamento (contrato com gh-agents): usuários separados —
    `CI_RUNNER`) que o workflow lê — nenhum mecanismo paralelo.
 3. O repo do dashboard é o segundo habilitado no gh-agents (dogfood).
 4. Credencial: GitHub App `gh-agents-ops` (manifest gerado pelo repo
-   gh-agents), instalado em heliowap + orgs — permissions: `actions:write`,
+   gh-agents), instalado em heliowap + orgs — permissions: `actions:read`,
    `administration` (runners), `variables` (o switch), `metadata`.
 
 ## Pendências para o spec completo (fase B)

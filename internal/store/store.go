@@ -315,7 +315,6 @@ type pruneQuery struct {
 func (s *Store) PruneCurrent(ctx context.Context, now time.Time) error {
 	cutoff := now.Add(-10 * time.Minute).Unix()
 	return s.prune(ctx, []pruneQuery{
-		{`DELETE FROM tmux_sessions WHERE seen_at < ?`, cutoff},
 		{`DELETE FROM runners WHERE seen_at < ?`, cutoff},
 	})
 }

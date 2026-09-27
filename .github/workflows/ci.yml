@@ -24,14 +24,25 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: Lint workflows and shell scripts
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml
+          shellcheck scripts/*.sh
+
       - name: Build frontend
         working-directory: web
         run: |
           npm ci
           npm run build
 
+      - name: Verify embedded frontend matches source
+        run: test -z "$(git status --porcelain -- internal/web/dist)"
+
       - name: Test Go code
-        run: go test ./...
+        run: |
+          go test ./...
+          go test -race ./...
+          go vet ./...
 
       - name: Build single binary
         run: go build -trimpath -o /tmp/vpsdash ./cmd/vpsdash

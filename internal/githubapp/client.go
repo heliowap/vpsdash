@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -30,6 +31,9 @@ type Client struct {
 	mu            sync.Mutex
 	tokens        map[string]cachedToken
 }
+
+//go:embed api-version.txt
+var apiVersion string
 
 type cachedToken struct {
 	value string
@@ -119,7 +123,7 @@ func (c *Client) request(ctx context.Context, method, path, token string, body a
 		return 0, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("X-GitHub-Api-Version", strings.TrimSpace(apiVersion))
 	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -142,6 +146,9 @@ func (c *Client) request(ctx context.Context, method, path, token string, body a
 }
 
 func (c *Client) token(ctx context.Context, owner string) (string, error) {
+	if c == nil {
+		return "", errors.New("GitHub App is not configured")
+	}
 	id, ok := c.installations[owner]
 	if !ok || id <= 0 {
 		return "", fmt.Errorf("GitHub App is not installed for %s", owner)
@@ -245,18 +252,6 @@ func (c *Client) Runs(ctx context.Context, repo, status string) ([]WorkflowRun, 
 	}
 	_, err = c.request(ctx, "GET", "/repos/"+repo+"/actions/runs?status="+status+"&per_page=100", token, nil, &result)
 	return result.WorkflowRuns, err
-}
-
-func (c *Client) Rerun(ctx context.Context, repo string, runID int64) error {
-	if runID <= 0 {
-		return errors.New("invalid run ID")
-	}
-	token, err := c.repoToken(ctx, repo)
-	if err != nil {
-		return err
-	}
-	_, err = c.request(ctx, "POST", fmt.Sprintf("/repos/%s/actions/runs/%d/rerun", repo, runID), token, map[string]any{}, nil)
-	return err
 }
 
 func (c *Client) Jobs(ctx context.Context, repo string, runID int64) ([]WorkflowJob, error) {

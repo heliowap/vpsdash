@@ -6,7 +6,13 @@ repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 operator_home=/home/helio
 service_home=/home/vpsdash
 bridge="$operator_home/.local/bin/vpsdash-ssh-readonly.py"
-service_key="$service_home/.ssh/id_ed25519_intrador-tech-vps"
+tailnet_name="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
+local_host_id="${tailnet_name%%.*}"
+if [[ ! "$tailnet_name" =~ ^[A-Za-z0-9.-]+$ || ! "$local_host_id" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo 'Nome DNS da tailnet inválido.' >&2
+  exit 1
+fi
+service_key="$service_home/.ssh/id_ed25519_$local_host_id"
 
 if (( EUID == 0 )); then
   as_operator() { runuser -u helio -- env HOME=/home/helio "$@"; }
@@ -52,11 +58,6 @@ if ! as_operator grep -Fqx -- "$entry" "$operator_home/.ssh/authorized_keys"; th
   printf '%s\n' "$entry" | as_operator tee -a "$operator_home/.ssh/authorized_keys" >/dev/null
 fi
 
-tailnet_name="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
-if [[ ! "$tailnet_name" =~ ^[A-Za-z0-9.-]+$ ]]; then
-  echo 'Nome DNS da tailnet inválido.' >&2
-  exit 1
-fi
 host_key="$(awk 'NR==1 {print $1 " " $2}' /etc/ssh/ssh_host_ed25519_key.pub)"
 if [[ ! "$host_key" =~ ^ssh-ed25519[[:space:]] ]]; then
   echo 'A chave Ed25519 do SSH local não está disponível.' >&2

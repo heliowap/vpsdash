@@ -247,6 +247,7 @@ path = pathlib.Path(sys.argv[1])
 config = json.loads(path.read_text())
 status = json.loads(subprocess.check_output(["tailscale", "status", "--json"]))
 devices = [status["Self"], *status.get("Peer", {}).values()]
+local_host_id = status["Self"]["DNSName"].split(".")[0]
 dns = {device.get("DNSName", "").split(".")[0]: device.get("DNSName", "").rstrip(".")
        for device in devices if device.get("DNSName")}
 for host in config["hosts"]:
@@ -255,11 +256,10 @@ for host in config["hosts"]:
         raise SystemExit("Host ausente da tailnet: " + host["id"])
     sample_name = host["tailnet_name"] == host["id"] + ".tailnet.ts.net"
     host["tailnet_name"] = name
-    if host["id"] != "intrador-tech-vps" and host["kind"] == "vps":
+    if host["id"] != local_host_id and host["kind"] == "vps":
         if sample_name or not pathlib.Path(host.get("ssh_key_file", "")).is_file():
             host["kind"] = "presence"
-            host.pop("ssh_user", None)
-            host.pop("ssh_key_file", None)
+            # Keep the planned key path so another wizard run can offer SSH setup.
 owner = pwd.getpwnam("vpsdash")
 with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as output:
     json.dump(config, output, indent=2)
@@ -330,6 +330,13 @@ pause
 
 stage "Coletores locais"
 say "Instala chaves separadas e comandos SSH restritos para helio e gh-agents."
+local_host_id="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].split(".")[0])')"
+mapfile -t planned_remote_hosts < <(jq -r --arg local "$local_host_id" --slurpfile sample "$repo_dir/config.example.json" '
+  ($sample[0].hosts | map(select(.kind == "vps") | .id)) as $sample_vps
+  | .hosts[]
+  | select(.id != $local and (.kind == "vps" or (.ssh_key_file // "") != "" or (.id as $id | $sample_vps | index($id))))
+  | .id
+' "$config_file")
 "$repo_dir/scripts/setup-local-collector.sh"
 if getent passwd gh-agents >/dev/null; then
   "$repo_dir/scripts/setup-runner-collector.sh"
@@ -341,7 +348,7 @@ pause
 
 stage "Demais VPSs da tailnet"
 say "Cada VPS terá uma chave própria. Confira a host key pelo console desse servidor."
-for host_id in allmedical-app allmedical-mail intrador; do
+for host_id in "${planned_remote_hosts[@]}"; do
   if remote_configured "$host_id"; then
     say "$host_id já está ativo no inventário."
     continue
@@ -556,24 +563,26 @@ user_systemctl daemon-reload
 user_systemctl enable vpsdash.service
 user_systemctl restart vpsdash.service
 user_systemctl is-active --quiet vpsdash.service
+listen_addr="$(jq -er '.listen | strings' "$config_file")"
+health_url="http://$listen_addr/healthz"
 for ((attempt=0; attempt<10; attempt++)); do
-  if curl -fsS --max-time 2 http://127.0.0.1:8484/healthz -o /dev/null 2>/dev/null; then
+  if curl -fsS --max-time 2 "$health_url" -o /dev/null 2>/dev/null; then
     break
   fi
   sleep 1
 done
-curl -fsS --max-time 5 http://127.0.0.1:8484/healthz -o /dev/null
+curl -fsS --max-time 5 "$health_url" -o /dev/null
 if tailscale serve status --json | jq -e '(.AllowFunnel // {}) | any(.[])' >/dev/null; then
   wizard_error 'Tailscale Funnel está ativo neste host; revise antes de publicar o painel.'
   exit 1
 fi
 self_dns="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
 panel_serve_port() {
-  tailscale serve status --json | jq -r --arg dns "$self_dns" '
+  tailscale serve status --json | jq -r --arg dns "$self_dns" --arg backend "http://$listen_addr" '
     [ . as $status
       | (.Web // {}) | to_entries[]
       | select(.key | startswith($dns + ":"))
-      | select(.value.Handlers["/"].Proxy == "http://127.0.0.1:8484")
+      | select(.value.Handlers["/"].Proxy == $backend)
       | .key | split(":")[-1]
       | select($status.TCP[.].HTTPS == true)
     ] | .[0] // empty'
@@ -593,7 +602,7 @@ elif confirm "Publicar o painel com Tailscale Serve HTTPS privado?"; then
     wizard_error "A porta $serve_port também está ocupada; libere-a antes de publicar o painel."
     exit 1
   fi
-  tailscale serve --https="$serve_port" --bg 127.0.0.1:8484
+  tailscale serve --https="$serve_port" --bg "$listen_addr"
   serve_port="$(panel_serve_port)"
   if [[ -z "$serve_port" ]]; then
     wizard_error 'Serve não registrou a rota HTTPS para o painel.'

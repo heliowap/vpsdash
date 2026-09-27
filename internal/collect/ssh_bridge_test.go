@@ -97,4 +97,13 @@ func TestSSHBridgeRejectsArbitraryCommands(t *testing.T) {
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Fatalf("forbidden command changed the filesystem: %v", err)
 	}
+	for _, name := range []string{"-help", "user:-help"} {
+		command, err := healthCommand("systemd", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if output, err := runSSHBridge(t, command, ""); err == nil || !strings.Contains(string(output), "comando SSH não permitido") {
+			t.Fatalf("bridge accepted option-like name %q: %q, %v", name, output, err)
+		}
+	}
 }

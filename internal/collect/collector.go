@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os/exec"
 	"strings"
 	"sync"
@@ -26,15 +25,16 @@ type FleetAPI interface {
 }
 
 type Collector struct {
-	Config    config.Config
-	Store     *store.Store
-	Executor  *Executor
-	GitHub    FleetAPI
-	mu        sync.RWMutex
-	hostLocks map[string]*sync.Mutex
-	queued    map[string][]githubapp.WorkflowRun
-	errors    map[string]string
-	lastFleet time.Time
+	Config     config.Config
+	Store      *store.Store
+	Executor   *Executor
+	healthHTTP *http.Client
+	GitHub     FleetAPI
+	mu         sync.RWMutex
+	hostLocks  map[string]*sync.Mutex
+	queued     map[string][]githubapp.WorkflowRun
+	errors     map[string]string
+	lastFleet  time.Time
 }
 
 type hostCircuit struct {
@@ -65,7 +65,7 @@ func New(c config.Config, s *store.Store, github FleetAPI) *Collector {
 	for _, h := range c.Hosts {
 		locks[h.ID] = &sync.Mutex{}
 	}
-	return &Collector{Config: c, Store: s, Executor: NewExecutor(), GitHub: github, hostLocks: locks, queued: map[string][]githubapp.WorkflowRun{}, errors: map[string]string{}}
+	return &Collector{Config: c, Store: s, Executor: NewExecutor(), healthHTTP: newHealthHTTPClient(c.Hosts), GitHub: github, hostLocks: locks, queued: map[string][]githubapp.WorkflowRun{}, errors: map[string]string{}}
 }
 
 func (c *Collector) Start(ctx context.Context) error {
@@ -213,13 +213,11 @@ func (c *Collector) pollSessions(ctx context.Context, h config.Host) error {
 	if err != nil {
 		return err
 	}
+	observed := make([]store.Session, 0, len(sessions))
 	for _, session := range sessions {
-		x := store.Session{HostID: h.ID, Name: session.Name, PanePID: session.PanePID, CWD: session.CWD, Agent: session.Agent}
-		if err := c.Store.UpsertSession(ctx, x, time.Now()); err != nil {
-			return err
-		}
+		observed = append(observed, store.Session{HostID: h.ID, Name: session.Name, PanePID: session.PanePID, CWD: session.CWD, Agent: session.Agent})
 	}
-	return nil
+	return c.Store.ReplaceSessions(ctx, h.ID, observed, time.Now())
 }
 
 func (c *Collector) tailnetLoop(ctx context.Context) {
@@ -353,7 +351,7 @@ func (c *Collector) recordProjectCheck(ctx context.Context, p store.Project, ok 
 
 func (c *Collector) projectHealth(ctx context.Context, h config.Host, p store.Project) (bool, string, error) {
 	if p.HealthURL != "" {
-		return checkHTTP(ctx, p.HealthURL)
+		return checkHTTP(ctx, c.healthHTTP, p.HealthURL)
 	}
 	names := []string{p.Name}
 	if p.Expected != "" {
@@ -380,10 +378,9 @@ func (c *Collector) projectHealth(ctx context.Context, h config.Host, p store.Pr
 	return true, "healthy", nil
 }
 
-func checkHTTP(ctx context.Context, rawURL string) (bool, string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return false, "", errors.New("invalid health URL")
+func checkHTTP(ctx context.Context, client *http.Client, rawURL string) (bool, string, error) {
+	if _, err := parseHealthURL(rawURL); err != nil {
+		return false, "", err
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -391,10 +388,13 @@ func checkHTTP(ctx context.Context, rawURL string) (bool, string, error) {
 	if err != nil {
 		return false, "", err
 	}
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return false, "", ctx.Err()
+		}
+		if errors.Is(err, errHealthURLDenied) {
+			return false, "", err
 		}
 		return false, err.Error(), nil
 	}
@@ -519,7 +519,7 @@ func (c *Collector) maintenanceLoop(ctx context.Context) {
 		now := time.Now()
 		date := now.Format("2006-01-02")
 		c.setError("prune-current", c.Store.PruneCurrent(ctx, now))
-		if now.Hour() == 3 && now.Minute() >= 0 && lastPrune != date {
+		if now.Hour() == 3 && lastPrune != date {
 			err := c.Store.PruneHistory(ctx, now)
 			c.setError("prune-history", err)
 			if err == nil {

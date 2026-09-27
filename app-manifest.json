@@ -9,7 +9,7 @@
   "redirect_url": "https://github.com/heliowap/vpsdash",
   "public": false,
   "default_permissions": {
-    "actions": "write",
+    "actions": "read",
     "administration": "write",
     "actions_variables": "write",
     "organization_self_hosted_runners": "write",

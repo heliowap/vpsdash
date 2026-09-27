@@ -22,7 +22,8 @@ escopo excessivo e prende a operação a uma conta pessoal.
 - **Nome**: `gh-agents-ops` (slug gerado: `gh-agents-ops`; se ocupado,
   `vpsdash-ops`).
 - **Repository permissions**:
-  - `actions`: read/write — listar runs, re-run.
+  - `actions`: read — listar runs. Re-run fica para uma fase posterior e
+    exigirá elevar a permissão do App antes de expor o controle no painel.
   - `administration`: read/write — listar/remover self-hosted runners.
   - `variables`: read/write — `PATCH
     /repos/{owner}/{repo}/actions/variables/{CI_RUNNER,AGENT_RUNNER}` (o
@@ -142,7 +143,8 @@ timeout SSH 10 s, circuit-breaker: 3 falhas → host `unreachable` por 5 min).
 |---|---|---|
 | `metrics` | 30 d | `DELETE … WHERE ts < now-30d`, nightly 03:00 |
 | `checks` | 30 d | idem |
-| `tmux_sessions`, `runners` | estado corrente | upsert por chave; ausente 10 min → delete |
+| `tmux_sessions` | último snapshot confirmado por host | substituído após coleta completa; falha conserva a observação e a UI marca "Não confirmado" |
+| `runners` | estado corrente | upsert por chave; ausente 10 min → delete; falha da frota marca estado incerto na UI |
 | `alerts` | 90 d | nightly |
 | DB | — | `VACUUM` semanal (domingo 03:30) |
 

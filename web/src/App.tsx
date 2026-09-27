@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import {
   Activity, AlertCircle, ArrowUpRight, Boxes, Check, ChevronDown, ChevronRight,
@@ -44,7 +44,28 @@ function uptime(value?: number) {
   return days ? `${days} d` : `${Math.floor(value / 3600)} h`
 }
 
-function Sparkline({ points, label }: { points?: Metric[]; label: string }) {
+const historyRefreshMs = 6 * 60 * 60 * 1000
+const historyWindowSeconds = 30 * 24 * 60 * 60
+
+function withLatestMetric(points: Metric[], latest: Metric | undefined, now: number) {
+  const cutoff = now - historyWindowSeconds
+  const firstRecent = points.findIndex(point => point.ts >= cutoff)
+  const recent = firstRecent < 0 ? [] : firstRecent === 0 ? points : points.slice(firstRecent)
+  if (latest && latest.ts >= cutoff && (recent.length === 0 || latest.ts > recent[recent.length - 1].ts)) return [...recent, latest]
+  return recent
+}
+
+function sessionUncertain(session: Session, data: Dashboard) {
+  return Boolean(data.collector_errors[`host:${session.host_id}`]) || Date.now() / 1000 - session.seen_at > 120
+}
+
+function sessionCollectionCurrent(data: Dashboard, refreshFailed = false) {
+  return !refreshFailed && !Object.keys(data.collector_errors).some(scope => scope.startsWith('host:')) &&
+    data.hosts.filter(host => host.kind === 'vps').every(host => Boolean(host.seen_at && Date.now() / 1000 - host.seen_at <= 120)) &&
+    data.sessions.every(session => !sessionUncertain(session, data))
+}
+
+const Sparkline = memo(function Sparkline({ points, label }: { points?: Metric[]; label: string }) {
   const values = points?.flatMap(point => point.cpu_pct === undefined ? [] : [point.cpu_pct]) || []
   if (values.length < 2) return <span className="sparkline-empty">Histórico em coleta</span>
   const path = values.map((value, index) => {
@@ -53,7 +74,7 @@ function Sparkline({ points, label }: { points?: Metric[]; label: string }) {
     return `${index ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`
   }).join(' ')
   return <svg className="sparkline" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label={`${label}: histórico de CPU dos últimos 30 dias`}><path d={path} /></svg>
-}
+})
 
 function Login({ onLogin }: { onLogin: (csrf: string) => void }) {
   const [password, setPassword] = useState('')
@@ -119,6 +140,7 @@ function Overview({ data, histories, refreshFailed }: { data: Dashboard; histori
   const observed = observedAt > 0
   const stale = refreshFailed || (observed && Date.now() / 1000 - observedAt > 120)
   const fleetCurrent = !refreshFailed && data.fleet_seen_at > 0 && Date.now() / 1000 - data.fleet_seen_at <= 120 && !Object.keys(data.collector_errors).some(scope => scope.startsWith('github:'))
+  const sessionsCurrent = sessionCollectionCurrent(data, refreshFailed)
   return <>
     <section className={`situation ${problems.length ? 'situation-attention' : ''}`} aria-labelledby="situation-title">
       <div className="situation-top"><span className={`live-mark ${stale ? 'is-stale' : ''}`}><span /> {stale ? 'LEITURA DESATUALIZADA' : 'ESTADO OBSERVADO'}</span><time>Última leitura {observationTime(observedAt)}</time></div>
@@ -129,7 +151,7 @@ function Overview({ data, histories, refreshFailed }: { data: Dashboard; histori
     </section>
     <HostLedger hosts={data.hosts} histories={histories} />
     <section className="ledger-section overview-tail" aria-labelledby="activity-heading"><div className="section-heading"><div><h2 id="activity-heading">Em andamento</h2><p>Atividade recente da frota e das sessões.</p></div></div>
-      <div className="activity-grid"><div><span className="activity-number">{fleetCurrent ? data.runners.filter(runner => runner.busy).length : '—'}</span><span>runners ocupados</span></div><div><span className="activity-number">{fleetCurrent ? Object.values(data.queued).flat().length : '—'}</span><span>jobs na fila</span></div><div><span className="activity-number">{data.sessions.length}</span><span>sessões tmux</span></div></div>
+      <div className="activity-grid"><div><span className="activity-number">{fleetCurrent ? data.runners.filter(runner => runner.busy).length : '—'}</span><span>runners ocupados</span></div><div><span className="activity-number">{fleetCurrent ? Object.values(data.queued).flat().length : '—'}</span><span>jobs na fila</span></div><div><span className="activity-number">{sessionsCurrent ? data.sessions.length : '—'}</span><span>sessões tmux</span></div></div>
     </section>
   </>
 }
@@ -150,7 +172,7 @@ function ProjectEditor({ project, csrf, onSaved }: { project: Project; csrf: str
   }
   return <form className="inline-editor" onSubmit={save}>
     <label className="switch-line"><input type="checkbox" checked={monitored} onChange={event => setMonitored(event.target.checked)} /><span>Monitorar este projeto</span></label>
-    <div className="editor-fields"><label>URL de health <input type="url" value={healthURL} onChange={event => setHealthURL(event.target.value)} placeholder="https://serviço/health" /></label><label>Serviços esperados <input value={expected} onChange={event => setExpected(event.target.value)} placeholder={project.name} /><small>Separe por vírgulas. Use a URL ou os serviços esperados.</small></label></div>
+    <div className="editor-fields"><label>URL de health <input type="url" value={healthURL} onChange={event => setHealthURL(event.target.value)} placeholder="https://servico.example.com/health" /><small>Use um endereço público ou o nome de um host do inventário.</small></label><label>Serviços esperados <input value={expected} onChange={event => setExpected(event.target.value)} placeholder={project.name} /><small>Separe por vírgulas. Use a URL ou os serviços esperados.</small></label></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <button className="button button-primary button-small" disabled={busy} type="submit">{busy ? 'Salvando…' : 'Salvar monitoramento'}</button>
   </form>
@@ -298,8 +320,12 @@ function RunnerRow({ runner, uncertain }: { runner: Runner; uncertain: boolean }
   return <div className="runner-row"><span className={`status-dot ${uncertain ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
 }
 
-function Sessions({ data }: { data: Dashboard }) {
-  return <div className="page-body"><div className="page-title"><h1>Sessões</h1><p>tmux mantém seus agentes vivos no host. O processo em cada pane identifica o agente.</p></div><section className="ledger-section"><div className="section-heading"><h2>Sessões encontradas</h2><span className="section-count">{data.sessions.length}</span></div>{data.sessions.length ? <div className="ruled-list">{data.sessions.map((session: Session) => <div className="session-row" key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {age(session.seen_at)}</small></div><span className="state-stamp">{session.agent || 'shell'}</span></div>)}</div> : <div className="empty-line">Nenhuma sessão tmux observada. As sessões aparecem quando os hosts forem alcançados.</div>}</section><div className="info-note"><CircleHelp size={18} /><p>O acesso ao terminal requer a chave SSH de leitura do usuário <code>vpsdash</code> no host de cada sessão.</p></div></div>
+function Sessions({ data, refreshFailed }: { data: Dashboard; refreshFailed: boolean }) {
+  const collectionUncertain = !sessionCollectionCurrent(data, refreshFailed)
+  return <div className="page-body"><div className="page-title"><h1>Sessões</h1><p>tmux mantém seus agentes vivos no host. O processo em cada pane identifica o agente.</p></div><section className="ledger-section"><div className="section-heading"><h2>Últimas sessões observadas</h2><span className="section-count">{data.sessions.length}</span></div>{data.sessions.length ? <div className="ruled-list">{data.sessions.map((session: Session) => {
+    const uncertain = refreshFailed || sessionUncertain(session, data)
+    return <div className="session-row" key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {uncertain ? 'última leitura ' : ''}{age(session.seen_at)}</small></div><span className={`state-stamp ${uncertain ? 'stamp-unknown' : ''}`}>{uncertain ? 'Não confirmado' : 'Observada'}</span></div>
+  })}</div> : <div className="empty-line">{collectionUncertain ? 'Coleta de sessões indisponível. Ainda não há uma leitura confirmada.' : 'Nenhuma sessão tmux observada. As sessões aparecem quando os hosts forem alcançados.'}</div>}</section><div className="info-note"><CircleHelp size={18} /><p>O acesso ao terminal requer a chave SSH de leitura do usuário <code>vpsdash</code> no host de cada sessão.</p></div></div>
 }
 
 export default function App() {
@@ -310,6 +336,8 @@ export default function App() {
   const [notice, setNotice] = useState<Notice>(null)
   const [refreshing, setRefreshing] = useState(false)
   const refreshVersion = useRef(0)
+  const historiesRef = useRef<Record<string, Metric[]>>({})
+  const historyLoadedAt = useRef<Record<string, number>>({})
 
   const refresh = useCallback(async () => {
     if (!session?.authenticated) return
@@ -321,7 +349,9 @@ export default function App() {
       setData(result)
       setNotice(null)
       const hosts = result.hosts.filter(host => host.kind === 'vps')
-      const items = await Promise.all(hosts.map(async host => {
+      const now = Date.now()
+      const due = hosts.filter(host => !historyLoadedAt.current[host.id] || now - historyLoadedAt.current[host.id] >= historyRefreshMs)
+      const items = await Promise.all(due.map(async host => {
         try { return [host.id, await api.metrics(host.id)] as const }
         catch (err) {
           if (err instanceof ApiError && err.status === 401) throw err
@@ -329,11 +359,19 @@ export default function App() {
         }
       }))
       if (version !== refreshVersion.current) return
-      setHistories(current => Object.fromEntries(items.map(([id, points]) => [id, points ?? current[id] ?? []])))
+      const fetched = new Map(items)
+      const next: Record<string, Metric[]> = {}
+      for (const host of hosts) {
+        const points = fetched.get(host.id)
+        if (points) historyLoadedAt.current[host.id] = now
+        next[host.id] = withLatestMetric(points ?? historiesRef.current[host.id] ?? [], host.latest, Math.floor(now / 1000))
+      }
+      historiesRef.current = next
+      setHistories(next)
     }
     catch (err) {
       if (version !== refreshVersion.current) return
-      if (err instanceof ApiError && err.status === 401) { setSession({ authenticated: false, csrf: '' }); setData(null); setHistories({}) }
+      if (err instanceof ApiError && err.status === 401) { setSession({ authenticated: false, csrf: '' }); setData(null); setHistories({}); historiesRef.current = {}; historyLoadedAt.current = {} }
       else setNotice({ kind: 'error', message: err instanceof Error ? err.message : 'Falha ao atualizar o painel.' })
     } finally { if (version === refreshVersion.current) setRefreshing(false) }
   }, [session?.authenticated])
@@ -344,7 +382,7 @@ export default function App() {
   async function logout() {
     if (!session) return
     ++refreshVersion.current
-    try { await api.logout(session.csrf) } finally { setSession({ authenticated: false, csrf: '' }); setData(null); setHistories({}); setRefreshing(false) }
+    try { await api.logout(session.csrf) } finally { setSession({ authenticated: false, csrf: '' }); setData(null); setHistories({}); historiesRef.current = {}; historyLoadedAt.current = {}; setRefreshing(false) }
   }
 
   if (!session) return <div className="boot-screen"><div className="boot-mark"><Activity size={23} /> vpsdash</div><span>Carregando painel…</span></div>
@@ -355,7 +393,7 @@ export default function App() {
     <div className="main-wrap"><header className="top-bar"><div className="mobile-brand"><Activity size={19} strokeWidth={2.5} /><strong>vpsdash</strong></div><div className="top-context"><span className="top-context-title">Central de comando</span><span className="top-context-sub">Observação em tempo real</span></div><div className="top-actions"><button className={`icon-button ${refreshing ? 'is-spinning' : ''}`} type="button" onClick={() => void refresh()} aria-label="Atualizar dados" title="Atualizar dados"><RefreshCw size={19} /></button><button className="icon-button" type="button" onClick={() => void logout()} aria-label="Sair" title="Sair"><LogOut size={19} /></button></div></header>
       <main className="content"><div className="content-inner">
         {notice && <div className={`notice notice-${notice.kind}`} role="alert"><AlertCircle size={18} />{notice.message}</div>}
-        {data ? tab === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} /> : tab === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : tab === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : <Sessions data={data} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
+        {data ? tab === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} /> : tab === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : tab === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
         {data && !data.smtp_provisioned && tab !== 'overview' && <div className="service-note"><AlertCircle size={16} /><span>Canal de alerta por e-mail não provisionado. Eventos ficam enfileirados.</span></div>}
       </div></main>
     </div>

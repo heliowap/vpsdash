@@ -23,7 +23,6 @@ import (
 type GitHub interface {
 	Variable(context.Context, string, string) (string, error)
 	SetVariable(context.Context, string, string, string) error
-	Rerun(context.Context, string, int64) error
 }
 
 type Server struct {
@@ -62,8 +61,8 @@ func (s *Server) Handler() http.Handler {
 	private.HandleFunc("POST /api/repos/{owner}/{repo}/switch", s.switchRunner)
 	private.HandleFunc("POST /api/switches/bulk", s.bulkSwitch)
 	private.HandleFunc("POST /api/presets/{name}", s.preset)
-	private.HandleFunc("POST /api/repos/{owner}/{repo}/rerun/{id}", s.rerun)
 	private.HandleFunc("POST /api/logout", s.logout)
+	public.Handle("/api", s.authorize(private))
 	public.Handle("/api/", s.authorize(private))
 	public.HandleFunc("/", s.static)
 	return securityHeaders(public)
@@ -74,8 +73,8 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'")
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'")
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		next.ServeHTTP(w, r)
@@ -92,10 +91,20 @@ func errorResponse(w http.ResponseWriter, status int, message string) {
 	jsonResponse(w, status, map[string]string{"error": message})
 }
 
-func decodeJSON(r *http.Request, value any) error {
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 32<<10))
+func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(value)
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return errors.New("multiple JSON values")
+	}
+	return nil
 }
 
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +169,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Password string `json:"password"`
 	}
-	if err := decodeJSON(r, &body); err != nil {
+	if err := decodeJSON(w, r, &body); err != nil {
 		errorResponse(w, http.StatusBadRequest, "Senha inválida.")
 		return
 	}
@@ -333,7 +342,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		HealthURL string   `json:"health_url"`
 		Expected  []string `json:"expected"`
 	}
-	if err := decodeJSON(r, &body); err != nil {
+	if err := decodeJSON(w, r, &body); err != nil {
 		errorResponse(w, 400, "Configuração inválida.")
 		return
 	}
@@ -341,8 +350,8 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, 400, "Defina uma URL ou serviços esperados para monitorar.")
 		return
 	}
-	if body.HealthURL != "" && !strings.HasPrefix(body.HealthURL, "http://") && !strings.HasPrefix(body.HealthURL, "https://") {
-		errorResponse(w, 400, "A URL de health deve começar com http:// ou https://.")
+	if body.HealthURL != "" && collect.ValidateHealthURL(r.Context(), s.Config.Hosts, body.HealthURL) != nil {
+		errorResponse(w, 400, "A URL de health deve usar HTTP(S) e apontar para um endereço público ou um host do inventário.")
 		return
 	}
 	expected := ""
@@ -381,7 +390,7 @@ func (s *Server) switchRunner(w http.ResponseWriter, r *http.Request) {
 		Variable string `json:"variable"`
 		Label    string `json:"label"`
 	}
-	if err := decodeJSON(r, &body); err != nil {
+	if err := decodeJSON(w, r, &body); err != nil {
 		errorResponse(w, 400, "Seleção inválida.")
 		return
 	}
@@ -406,7 +415,7 @@ func (s *Server) bulkSwitch(w http.ResponseWriter, r *http.Request) {
 		Label        string   `json:"label"`
 		Repositories []string `json:"repositories"`
 	}
-	if err := decodeJSON(r, &body); err != nil || len(body.Repositories) == 0 {
+	if err := decodeJSON(w, r, &body); err != nil || len(body.Repositories) == 0 {
 		errorResponse(w, 400, "Seleção inválida.")
 		return
 	}
@@ -455,38 +464,12 @@ func (s *Server) preset(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 200, map[string]any{"preset": r.PathValue("name"), "label": label, "results": results})
 }
 
-func (s *Server) rerun(w http.ResponseWriter, r *http.Request) {
-	if s.GitHub == nil {
-		errorResponse(w, 503, "GitHub App não provisionado.")
-		return
-	}
-	repo := r.PathValue("owner") + "/" + r.PathValue("repo")
-	if !s.repoKnown(repo) {
-		errorResponse(w, 404, "Repositório desconhecido.")
-		return
-	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		errorResponse(w, 400, "Run inválido.")
-		return
-	}
-	if err := s.GitHub.Rerun(r.Context(), repo, id); err != nil {
-		errorResponse(w, 502, "GitHub recusou o re-run.")
-		return
-	}
-	jsonResponse(w, 200, map[string]bool{"requested": true})
-}
-
-func (s *Server) repoKnown(name string) bool {
-	for _, repo := range s.Config.Repositories {
-		if repo.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "Método não permitido.", http.StatusMethodNotAllowed)
+		return
+	}
 	if s.Static == nil {
 		http.NotFound(w, r)
 		return

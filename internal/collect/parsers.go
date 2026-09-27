@@ -58,9 +58,14 @@ func ParseMetricsSnapshot(raw string) (MetricsSnapshot, error) {
 			}
 			availableMem, _ = strconv.ParseUint(fields[1], 10, 64)
 		default:
-			if len(fields) >= 6 && fields[len(fields)-1] == "/" {
-				diskTotal, _ = strconv.ParseUint(fields[1], 10, 64)
-				diskUsed, _ = strconv.ParseUint(fields[2], 10, 64)
+			// df -P may wrap a long filesystem name onto the preceding line.
+			// Its final five fields remain size, used, available, use%, mount.
+			if len(fields) >= 5 && strings.HasSuffix(fields[len(fields)-2], "%") {
+				total, totalErr := strconv.ParseUint(fields[len(fields)-5], 10, 64)
+				used, usedErr := strconv.ParseUint(fields[len(fields)-4], 10, 64)
+				if totalErr == nil && usedErr == nil {
+					diskTotal, diskUsed = total, used
+				}
 			} else if len(fields) == 2 {
 				up, err := strconv.ParseFloat(fields[0], 64)
 				if err == nil {

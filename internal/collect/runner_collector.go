@@ -9,10 +9,14 @@ import (
 )
 
 func (c *Collector) runnerUnitLoop(ctx context.Context, account config.RunnerUnitHost) {
+	lock, ok := c.hostLocks[account.HostID]
+	if !ok {
+		c.setError("runner-units:"+account.HostID, fmt.Errorf("unknown runner unit host %s", account.HostID))
+		return
+	}
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
-		lock := c.hostLocks[account.HostID]
 		lock.Lock()
 		err := c.pollRunnerUnits(ctx, account)
 		lock.Unlock()
