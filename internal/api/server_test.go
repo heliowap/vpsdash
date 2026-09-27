@@ -159,6 +159,7 @@ func TestLoginRateLimitSeparatesClientsBehindLocalProxy(t *testing.T) {
 		r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"wrong"}`))
 		r.RemoteAddr = "127.0.0.1:12345"
 		r.Header.Set("X-Real-IP", clientIP)
+		r.Header.Set("X-Forwarded-For", clientIP)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w.Code
@@ -229,10 +230,11 @@ func TestLoginClientIPKeepsProxyRoutesSeparate(t *testing.T) {
 		{"sample-vps.example.invalid", "127.0.0.1:1234", "fd7a:115c:a1e0::123", "203.0.113.9", "fd7a:115c:a1e0::123"},
 		{"sample-vps.example.invalid", "127.0.0.1:1234", "100.101.102.103, 100.101.102.104", "203.0.113.9", "100.101.102.104"},
 		{"app.example.com", "127.0.0.1:1234", "198.51.100.8, 100.101.102.103", "203.0.113.9", "100.101.102.103"},
-		{"app.example.com", "127.0.0.1:1234", "100.101.102.103, 198.51.100.8", "203.0.113.9", "203.0.113.9"},
+		{"app.example.com", "127.0.0.1:1234", "100.101.102.103, 198.51.100.8", "198.51.100.8", "198.51.100.8"},
 		{"sample-vps.example.invalid", "127.0.0.1:1234", "203.0.113.8", "203.0.113.9", "127.0.0.1"},
 		{"app.example.com", "127.0.0.1:1234", "100.101.102.103", "203.0.113.9", "100.101.102.103"},
-		{"app.example.com", "127.0.0.1:1234", "198.51.100.10", "203.0.113.9", "203.0.113.9"},
+		{"app.example.com", "127.0.0.1:1234", "198.51.100.10", "198.51.100.10", "198.51.100.10"},
+		{"app.example.com", "127.0.0.1:1234", "198.51.100.10", "203.0.113.9", "127.0.0.1"},
 		{"sample-vps.example.invalid", "198.51.100.9:1234", "100.101.102.103", "203.0.113.9", "198.51.100.9"},
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/api/login", nil)
@@ -241,6 +243,23 @@ func TestLoginClientIPKeepsProxyRoutesSeparate(t *testing.T) {
 		r.Header.Set("X-Real-IP", tc.realIP)
 		if got := s.loginClientIP(r); got != tc.want {
 			t.Errorf("%s from %s = %q, want %q", tc.host, tc.remote, got, tc.want)
+		}
+	}
+}
+
+func TestLoginIdentityDoesNotDependOnServeHostOrClientHostHeader(t *testing.T) {
+	s := &Server{Config: config.Config{TrustProxyHeader: true}}
+	for _, host := range []string{"app.example.com", "fake-serve.example.invalid"} {
+		r := httptest.NewRequest(http.MethodPost, "/api/login", nil)
+		r.RemoteAddr, r.Host = "127.0.0.1:1234", host
+		r.Header.Set("X-Forwarded-For", "198.51.100.8, 100.101.102.103")
+		r.Header.Set("X-Real-IP", "203.0.113.9")
+		if got := s.loginClientIP(r); got != "100.101.102.103" {
+			t.Fatalf("%s: Serve client identity = %q", host, got)
+		}
+		r.Header.Del("X-Forwarded-For")
+		if got := s.loginClientIP(r); got != "127.0.0.1" {
+			t.Fatalf("%s: unverified proxy identity = %q", host, got)
 		}
 	}
 }

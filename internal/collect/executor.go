@@ -59,7 +59,9 @@ func (e *Executor) Check(ctx context.Context, host config.Host, source, name str
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	return e.runRemote(ctx, host, command, "")
+	// A stuck health probe can reconnect without closing the host poller's
+	// metrics, discovery, or session transport.
+	return e.runRemoteFor(ctx, host, "health:"+host.ID, command, "")
 }
 
 func healthCommand(source, name string) (string, error) {
@@ -73,14 +75,37 @@ func healthCommand(source, name string) (string, error) {
 }
 
 func (e *Executor) runRemote(ctx context.Context, host config.Host, command, input string) (string, error) {
-	client, err := e.client(host)
+	return e.runRemoteFor(ctx, host, host.ID, command, input)
+}
+
+func (e *Executor) runRemoteFor(ctx context.Context, host config.Host, poolKey, command, input string) (string, error) {
+	client, err := e.client(host, poolKey)
 	if err != nil {
 		return "", err
 	}
-	session, err := client.NewSession()
-	if err != nil {
-		e.invalidate(host.ID)
-		return "", err
+	type openedSession struct {
+		session *ssh.Session
+		err     error
+	}
+	opened := make(chan openedSession, 1)
+	go func() {
+		session, err := client.NewSession()
+		if ctx.Err() != nil && session != nil {
+			_ = session.Close()
+		}
+		opened <- openedSession{session, err}
+	}()
+	var session *ssh.Session
+	select {
+	case result := <-opened:
+		if result.err != nil {
+			e.invalidate(poolKey, client)
+			return "", result.err
+		}
+		session = result.session
+	case <-ctx.Done():
+		e.invalidate(poolKey, client)
+		return "", ctx.Err()
 	}
 	defer session.Close()
 	session.Stdin = strings.NewReader(input)
@@ -96,18 +121,23 @@ func (e *Executor) runRemote(ctx context.Context, host config.Host, command, inp
 	select {
 	case result := <-done:
 		if result.err != nil {
+			var exit *ssh.ExitError
+			if !errors.As(result.err, &exit) {
+				e.invalidate(poolKey, client)
+			}
 			return string(result.output), fmt.Errorf("ssh %s: %w", host.ID, result.err)
 		}
 		return string(result.output), nil
 	case <-ctx.Done():
 		_ = session.Close()
+		e.invalidate(poolKey, client)
 		return "", ctx.Err()
 	}
 }
 
-func (e *Executor) client(host config.Host) (*ssh.Client, error) {
+func (e *Executor) client(host config.Host, poolKey string) (*ssh.Client, error) {
 	e.mu.Lock()
-	if client := e.clients[host.ID]; client != nil {
+	if client := e.clients[poolKey]; client != nil {
 		e.mu.Unlock()
 		return client, nil
 	}
@@ -141,21 +171,21 @@ func (e *Executor) client(host config.Host) (*ssh.Client, error) {
 		return nil, err
 	}
 	e.mu.Lock()
-	if existing := e.clients[host.ID]; existing != nil {
+	if existing := e.clients[poolKey]; existing != nil {
 		e.mu.Unlock()
 		_ = client.Close()
 		return existing, nil
 	}
-	e.clients[host.ID] = client
+	e.clients[poolKey] = client
 	e.mu.Unlock()
 	return client, nil
 }
 
-func (e *Executor) invalidate(id string) {
+func (e *Executor) invalidate(poolKey string, client *ssh.Client) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if client := e.clients[id]; client != nil {
+	if e.clients[poolKey] == client {
 		_ = client.Close()
-		delete(e.clients, id)
+		delete(e.clients, poolKey)
 	}
 }

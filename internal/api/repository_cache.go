@@ -33,13 +33,14 @@ func (s *Server) repositoryVariables(repo string) (agent, ci string, agentKnown,
 		state = &repoVariableCache{}
 		s.repoCache[repo] = state
 	}
-	if !state.refreshing && (state.updated.IsZero() || time.Since(state.updated) >= time.Minute || (state.problem == "" && (!state.agentKnown || !state.ciKnown))) {
+	needsObservation := state.problem == "" && (!state.agentKnown || !state.ciKnown)
+	if !state.refreshing && (state.updated.IsZero() || time.Since(state.updated) >= time.Minute || needsObservation) {
 		state.refreshing = true
 		go s.refreshRepositoryVariables(repo, state.version)
 	}
 	agent, ci, agentKnown, ciKnown = state.agent, state.ci, state.agentKnown, state.ciKnown
 	agentError, ciError, problem = state.agentError, state.ciError, state.problem
-	if state.updated.IsZero() || (state.problem == "" && (!state.agentKnown || !state.ciKnown)) {
+	if state.updated.IsZero() || needsObservation {
 		problem = "GitHub em coleta"
 	}
 	s.repoMu.Unlock()

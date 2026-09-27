@@ -6,16 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 type Store struct {
-	db      *sql.DB
-	history *sql.DB
+	db        *sql.DB
+	history   *sql.DB
+	historyMu sync.RWMutex
 }
 
 type Host struct {
@@ -50,19 +53,24 @@ type Project struct {
 }
 
 func Open(path string) (*Store, error) {
+	var err error
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	uri := url.URL{Scheme: "file", Path: path}
+	uri.RawQuery = url.Values{"mode": {"rwc"}, "_foreign_keys": {"1"}, "_busy_timeout": {"5000"}}.Encode()
+	db, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
-		if _, err := db.Exec(pragma); err != nil {
-			_ = db.Close()
-			return nil, err
-		}
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	if err := migrate(db); err != nil {
 		_ = db.Close()
@@ -72,18 +80,17 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	history, err := sql.Open("sqlite", path)
+	uri.RawQuery = url.Values{"mode": {"ro"}, "_query_only": {"1"}, "_busy_timeout": {"5000"}}.Encode()
+	history, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	history.SetMaxOpenConns(1)
-	for _, pragma := range []string{"PRAGMA query_only=ON", "PRAGMA busy_timeout=5000"} {
-		if _, err := history.Exec(pragma); err != nil {
-			_ = history.Close()
-			_ = db.Close()
-			return nil, err
-		}
+	if err := history.Ping(); err != nil {
+		_ = history.Close()
+		_ = db.Close()
+		return nil, err
 	}
 	return &Store{db: db, history: history}, nil
 }
@@ -211,6 +218,8 @@ ORDER BY h.kind,h.id`)
 }
 
 func (s *Store) MetricHistory(ctx context.Context, hostID string, since, until int64) ([]Metric, error) {
+	s.historyMu.RLock()
+	defer s.historyMu.RUnlock()
 	step := (until - since + 719) / 720
 	if step < 60 {
 		step = 60
@@ -360,6 +369,8 @@ func (s *Store) prune(ctx context.Context, queries []pruneQuery) error {
 }
 
 func (s *Store) Vacuum(ctx context.Context) error {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
 	_, err := s.db.ExecContext(ctx, `VACUUM`)
 	return err
 }

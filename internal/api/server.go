@@ -251,37 +251,31 @@ func (s *Server) loginClientIP(r *http.Request) string {
 	if remote == nil || !remote.IsLoopback() {
 		return ip
 	}
-	host := r.Host
-	if name, _, err := net.SplitHostPort(host); err == nil {
-		host = name
+	// Serve supplies the tailnet source in X-Forwarded-For. Caddy must replace
+	// both forwarding headers with the observed public source (see README).
+	// Require the two headers to agree before trusting X-Real-IP, so a Serve
+	// request cannot choose its own rate-limit key even without a serve host.
+	values := r.Header.Values("X-Forwarded-For")
+	forwardedValue := ""
+	if len(values) > 0 {
+		forwardedValue = values[len(values)-1]
 	}
-	if s.Config.TailscaleServeHost != "" {
-		// Serve sets X-Forwarded-For to the tailnet source; taking the last
-		// element also handles a proxy that appends its observation to a chain.
-		// Match it before Host, which a client can spoof.
-		// CGNAT shares 100.64/10, so public clients behind that range also use
-		// this observed address as their per-IP key.
-		values := r.Header.Values("X-Forwarded-For")
-		forwardedValue := ""
-		if len(values) > 0 {
-			forwardedValue = values[len(values)-1]
-		}
-		if last := strings.LastIndexByte(forwardedValue, ','); last >= 0 {
-			forwardedValue = forwardedValue[last+1:]
-		}
-		if forwarded, err := netip.ParseAddr(strings.TrimSpace(forwardedValue)); err == nil {
-			forwarded = forwarded.Unmap()
-			if tailscaleIPv4.Contains(forwarded) || tailscaleIPv6.Contains(forwarded) {
-				return forwarded.String()
-			}
-		}
-		if strings.EqualFold(strings.TrimSuffix(host, "."), s.Config.TailscaleServeHost) {
-			return ip
+	if last := strings.LastIndexByte(forwardedValue, ','); last >= 0 {
+		forwardedValue = forwardedValue[last+1:]
+	}
+	forwarded, err := netip.ParseAddr(strings.TrimSpace(forwardedValue))
+	if err == nil {
+		forwarded = forwarded.Unmap()
+		if tailscaleIPv4.Contains(forwarded) || tailscaleIPv6.Contains(forwarded) {
+			return forwarded.String()
 		}
 	}
 	if s.Config.TrustProxyHeader {
-		if forwarded := net.ParseIP(r.Header.Get("X-Real-IP")); forwarded != nil {
-			return forwarded.String()
+		if realIP, realErr := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP"))); realErr == nil && err == nil {
+			realIP = realIP.Unmap()
+			if realIP == forwarded {
+				return realIP.String()
+			}
 		}
 	}
 	return ip

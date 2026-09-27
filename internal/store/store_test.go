@@ -213,6 +213,34 @@ func TestMetricHistoryDoesNotWaitForDashboardConnection(t *testing.T) {
 	}
 }
 
+func TestSQLiteConnectionPolicySurvivesReconnect(t *testing.T) {
+	s := newTestStore(t)
+	for _, db := range []*sql.DB{s.db, s.history} {
+		db.SetConnMaxLifetime(time.Nanosecond)
+	}
+	for i := 0; i < 2; i++ {
+		var foreignKeys, busyTimeout, queryOnly int
+		if err := s.db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.history.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.history.QueryRow("PRAGMA query_only").Scan(&queryOnly); err != nil {
+			t.Fatal(err)
+		}
+		if foreignKeys != 1 || busyTimeout != 5000 || queryOnly != 1 {
+			t.Fatalf("connection policy after reconnect = foreign_keys:%d busy_timeout:%d query_only:%d", foreignKeys, busyTimeout, queryOnly)
+		}
+		if _, err := s.history.Exec("INSERT INTO hosts(id,tailnet_name,kind) VALUES ('bad','bad','vps')"); err == nil {
+			t.Fatal("history connection accepted a write")
+		}
+	}
+	if err := s.Vacuum(context.Background()); err != nil {
+		t.Fatalf("maintenance with read-only history handle: %v", err)
+	}
+}
+
 func TestMetricHistoryBoundsThirtyDaysToDisplaySize(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

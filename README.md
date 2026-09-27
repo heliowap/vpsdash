@@ -225,15 +225,17 @@ app.example.com {
 }
 ```
 
-O proxy deve sobrescrever `X-Real-IP` e `X-Forwarded-For` com o IP da conexão
-recebida; não encaminhe um valor fornecido pelo navegador. O inventário de
+O proxy deve sobrescrever **ambos** `X-Real-IP` e `X-Forwarded-For` com o mesmo
+IP da conexão recebida; não encaminhe um valor fornecido pelo navegador. O
+painel só usa `X-Real-IP` quando os dois cabeçalhos concordam. O inventário de
 exemplo habilita `"trust_proxy_header": true` para que o login público tenha
 limites por cliente. O assistente preserva uma escolha explícita diferente;
 mantenha a opção ativa somente com um proxy público que sobrescreva ambos os
 cabeçalhos. A rota do Tailscale Serve funciona com a opção ligada ou desligada.
-Com `tailscale_serve_host` configurado, o serviço identifica primeiro o IP da
-tailnet em `X-Forwarded-For`, que o Tailscale Serve sobrescreve. Ele usa esse
-IP mesmo se um cliente alterar `Host` e enviar um `X-Real-IP` falso.
+O serviço identifica primeiro o IP da tailnet em `X-Forwarded-For`, que o
+Tailscale Serve sobrescreve, mesmo se `tailscale_serve_host` não estiver
+preenchido. Ele usa esse IP mesmo se um cliente alterar `Host` e enviar um
+`X-Real-IP` falso.
 Assim, as duas rotas compartilham a porta local e mantêm limites por cliente.
 O login limita cinco falhas por IP e
 20 falhas globais em cinco minutos, além de duas verificações simultâneas.

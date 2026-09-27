@@ -155,8 +155,13 @@ function incidents(data: Dashboard): Incident[] {
     })()
     items.push({ id: `collector-${scope}`, ...incident })
   }
-  for (const repo of data.repositories) if (repo.error && repo.error !== 'GitHub em coleta' && !data.collector_errors[`github:${repo.name}`]) {
-    items.push({ id: `integration-${repo.name}`, title: `GitHub indisponível: ${repo.name}`, detail: repo.error })
+  for (const repo of data.repositories) {
+    if (data.collector_errors[`github:${repo.name}`]) continue
+    const failed = [
+      ...(repo.agent_switchable && repo.agent_error ? [{ name: 'Agentes', error: repo.agent_error }] : []),
+      ...(repo.ci_switchable && repo.ci_error ? [{ name: 'CI', error: repo.ci_error }] : [])
+    ]
+    if (failed.length) items.push({ id: `integration-${repo.name}`, title: `GitHub não confirmou ${failed.map(item => item.name).join(' e ')}: ${repo.name}`, detail: [...new Set(failed.map(item => item.error))].join(' · ') })
   }
   return items
 }
@@ -251,7 +256,7 @@ function RepoSwitch({ repo, variable, csrf, onRefresh }: { repo: Repository; var
     catch (err) { setFeedback({ kind: 'error', message: err instanceof Error ? err.message : 'Não foi possível trocar.' }) }
     finally { setBusy(false) }
   }
-  return <div className="backend-row"><div><strong>{variable === 'AGENT_RUNNER' ? 'Agentes' : 'CI'}</strong><small>{!enabled ? 'Workflow sem switch confirmado' : currentKnown ? `${variableError ? 'Último valor confirmado' : 'Atual'}: ${current || 'padrão do workflow'}` : repo.error === 'GitHub em coleta' ? 'Consultando valor atual no GitHub…' : 'Valor atual desconhecido — GitHub indisponível'}</small></div>
+  return <div className="backend-row"><div><strong>{variable === 'AGENT_RUNNER' ? 'Agentes' : 'CI'}</strong><small>{!enabled ? 'Workflow sem switch confirmado' : currentKnown ? `${variableError ? 'Último valor confirmado' : 'Atual'}: ${current || 'padrão do workflow'}` : variableError ? `Valor atual desconhecido — ${variableError}` : repo.error === 'GitHub em coleta' ? 'Consultando valor atual no GitHub…' : 'Valor atual desconhecido — GitHub indisponível'}</small></div>
     {operable ? <div className="backend-control"><select aria-label={`Backend de ${variable} em ${repo.name}`} value={choice} onChange={event => { setChoice(event.target.value); setConfirm(false) }}>{labels.map(label => <option key={label} value={label}>{label}</option>)}</select><button className="button button-small" type="button" disabled={choice === current || busy} onClick={() => setConfirm(true)}>Trocar</button></div> : enabled ? <span className="muted-text">{repo.error === 'GitHub em coleta' ? 'Em coleta' : 'Integração indisponível'}</span> : <a className="button button-small" href={`https://github.com/${repo.name}/pulls`} target="_blank" rel="noreferrer" aria-label={`Abrir PRs de ${repo.name} para solicitar adoção de ${variable}`}>Abrir PRs para pedir /oc</a>}
     {confirm && <div className="inline-confirm"><span>Trocar {repo.name} de <b>{current || 'padrão'}</b> para <b>{choice}</b>?</span><div><button type="button" className="button button-small button-primary" disabled={busy} onClick={apply}>{busy ? 'Aplicando…' : 'Confirmar'}</button><button type="button" className="button button-small button-plain" onClick={() => setConfirm(false)}>Cancelar</button></div></div>}
     {feedback && <p className={`inline-feedback ${feedback.kind === 'error' ? 'is-error' : ''}`} role={feedback.kind === 'error' ? 'alert' : 'status'}>{feedback.message}</p>}
@@ -260,6 +265,16 @@ function RepoSwitch({ repo, variable, csrf, onRefresh }: { repo: Repository; var
 
 type SwitchVariable = 'AGENT_RUNNER' | 'CI_RUNNER'
 type SwitchTarget = { repo: string; variable: SwitchVariable; current: string; currentKnown: boolean }
+
+function canSwitch(repo: Repository, variable: SwitchVariable): boolean {
+  return variable === 'AGENT_RUNNER' ? repo.agent_switchable && repo.agent_known && !repo.agent_error : repo.ci_switchable && repo.ci_known && !repo.ci_error
+}
+
+function switchError(repo: Repository): string {
+  if (repo.agent_switchable && repo.agent_error) return repo.agent_error
+  if (repo.ci_switchable && repo.ci_error) return repo.ci_error
+  return ''
+}
 
 function currentLabel(target: SwitchTarget): string {
   return target.currentKnown ? target.current || 'padrão do workflow' : 'valor atual desconhecido'
@@ -279,8 +294,8 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
   const [bulkPending, setBulkPending] = useState(false)
   const [feedback, setFeedback] = useState<Notice>(null)
   const [busy, setBusy] = useState(false)
-  const selectable = data.repositories.filter(repo => bulkVariable === 'AGENT_RUNNER' ? repo.agent_switchable && repo.agent_known && !repo.agent_error : repo.ci_switchable && repo.ci_known && !repo.ci_error)
-  const hasOperations = data.repositories.some(repo => repo.agent_switchable && repo.agent_known && !repo.agent_error || repo.ci_switchable && repo.ci_known && !repo.ci_error)
+  const selectable = data.repositories.filter(repo => canSwitch(repo, bulkVariable))
+  const hasOperations = data.repositories.some(repo => canSwitch(repo, 'AGENT_RUNNER') || canSwitch(repo, 'CI_RUNNER'))
   const fleetObserved = data.fleet_seen_at > 0
   const fleetErrors = Object.keys(data.collector_errors).some(scope => scope.startsWith('github:'))
   const fleetStale = fleetObserved && Date.now() / 1000 - data.fleet_seen_at > 120
@@ -311,7 +326,7 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
       <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
       <section className="ledger-section"><div className="section-heading"><h2>Fila</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}`}</span></div>{queue.length ? <div className="ruled-list">{queue.map(run => <a className="queue-row" key={`${run.repo}-${run.id}`} href={run.html_url} target="_blank" rel="noreferrer"><Clock3 size={18} /><span><strong>{run.display_title || run.name}</strong><small>{run.repo}</small></span><ArrowUpRight size={17} /></a>)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual da fila não está disponível.' : 'Nenhum job aguardando runner.'}</div>}</section>
     </>}
-    <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className={`state-stamp ${repo.error === 'GitHub em coleta' ? 'stamp-unknown' : 'stamp-bad'}`}>{repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
+    <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className={`state-stamp ${switchError(repo) ? 'stamp-bad' : 'stamp-unknown'}`}>{switchError(repo) || repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
     {hasOperations && <>
       <section className="ledger-section">
         <div className="section-heading"><h2>Aplicar em lote</h2></div>
