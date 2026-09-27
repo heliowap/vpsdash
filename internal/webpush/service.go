@@ -47,7 +47,8 @@ func (e *StatusError) Retryable() bool {
 // only posts to these hosts, so a stored subscription cannot aim requests at
 // internal addresses.
 var pushServiceHosts = []string{
-	"fcm.googleapis.com",        // Chrome, Chromium, Android
+	"fcm.googleapis.com",        // Chrome, Edge on Android, Android
+	"jmt17.google.com",          // Chromium builds without Google API keys
 	"push.services.mozilla.com", // Firefox
 	"push.apple.com",            // Safari, iOS home-screen apps
 	"notify.windows.com",        // Edge

@@ -345,6 +345,8 @@ func TestEndpointAllowlist(t *testing.T) {
 	service := webpush.New(nil, nil)
 	for endpoint, ok := range map[string]bool{
 		"https://fcm.googleapis.com/fcm/send/abc":                    true,
+		"https://jmt17.google.com/fcm/send/abc":                      true,
+		"https://google.com/fcm/send/abc":                            false,
 		"https://updates.push.services.mozilla.com/wpush/v2/abc":     true,
 		"https://web.push.apple.com/QGx":                             true,
 		"https://wns2-par02p.notify.windows.com/w/?token=abc":        true,
