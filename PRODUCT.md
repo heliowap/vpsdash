@@ -11,7 +11,8 @@ web
 Confirmed by spec (`docs/specs/2026-09-24-vps-dashboard-design.md`): single Go
 binary serving API + embedded React/Vite SPA (`embed.FS`), SQLite local store,
 and `x/crypto/ssh` pool. Collector SSH keys are unique per host and limited
-by a Python 3 forced command that accepts only read operations. The terminal
+by a Python 3 forced command that accepts only read operations; the separate
+`gh-agents` key may also restart or drain that account's own runner units. The terminal
 bridge is a later phase. No Node in production. The service binds to loopback;
 a public HTTPS reverse proxy serves the login page, and `tailscale serve` can
 also provide private tailnet access.
@@ -61,8 +62,9 @@ sessions, and bounded login attempts; the service itself remains on loopback.
   the runner switch writes the same repo variables, GitHub App
   `gh-agents-ops` supplies runners/variables/runs API access, and the dashboard
   repo dogfoods gh-agents. Runner service units and the cleanup timer appear
-  as native monitored projects. Direct unit controls require the later runner
-  operations phase.
+  as native monitored projects. The runner operations phase adds restart and
+  drain of each `actions.runner.*` unit through the `gh-agents` forced
+  command, without sudo and without new GitHub App permissions.
 
 ## Capabilities and Constraints
 
@@ -79,9 +81,13 @@ After `v0.1`, the session list also shows a heuristic agent state
 (working/waiting/idle), brought forward from v2. It is read-only and never
 blocks an action.
 
+Runner operations phase (`v0.2`): restart and drain of runner units, with
+inline confirmation and an audit record per operation. Drain waits until
+neither GitHub nor the host reports a job, then stops the unit; it cannot
+stop GitHub from assigning a job in the seconds before the stop.
+
 Concept target beyond `v0.1`: file access; xterm.js terminal over SSH PTY;
-one-click read-only tmux attach; runner unit restart/drain; SMTP
-delivery. The phase B spec explicitly permits tmux attach and alerts in
+one-click read-only tmux attach; SMTP delivery. The phase B spec explicitly permits tmux attach and alerts in
 `v0.2` without a schema change.
 
 v2 (confirmed direction, not v1 scope): Web Push via VAPID, send-keys from

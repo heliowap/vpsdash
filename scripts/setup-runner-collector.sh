@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Authorize a separate vpsdash key to read the gh-agents user units on this VPS.
+# Authorize a separate vpsdash key to read the gh-agents user units on this VPS
+# and to restart or drain its actions.runner.* units, without sudo.
 set -euo pipefail
 
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -105,4 +106,5 @@ if (( EUID == 0 )); then
   chown helio:helio "$fixture_path"
 fi
 echo "Coleta restrita das units gh-agents verificada em $tailnet_name."
+echo "A mesma chave pode reiniciar ou drenar somente as units actions.runner.* dessa conta."
 echo "Amostra com nomes ocultados para o teste: $fixture_path"

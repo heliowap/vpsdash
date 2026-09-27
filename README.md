@@ -19,7 +19,9 @@ de custo, não como cobrança. O coletor lê a cada 10 minutos os jobs de cada
 tentativa de run concluída uma única vez, guarda 30 dias em `job_minutes` e
 pausa ao restarem 500 requisições da API para preservar a frota e o switch.
 As units `actions.runner.*` e `gh-agents-cleanup.timer` da conta `gh-agents`
-entram automaticamente como projetos monitorados, sem promoção manual.
+entram automaticamente como projetos monitorados, sem promoção manual. Na
+página Frota, cada unit de runner pode ser reiniciada ou drenada após
+confirmação (veja [Operar units de runner](#operar-units-de-runner)).
 
 O canal SMTP mostra "não provisionado" e mantém eventos pendentes enquanto
 `smtp.env` não existir. A lista tmux detecta o agente e sugere seu estado
@@ -189,6 +191,42 @@ Mantenha `runner_unit_hosts` no inventário com `ssh_user: "gh-agents"` e
 `ssh_key_file` apontando para essa segunda chave. O painel usa a conta da
 frota para ler `systemctl --user` a cada 30 s. Uma falha de SSH ou do bus
 systemd aparece como erro do coletor; não conta como falha de uma unit.
+
+#### Operar units de runner
+
+A mesma chave da conta `gh-agents` aceita dois comandos de escrita, e só eles:
+`runner-restart <unit>` e `runner-drain <unit>`. A ponte exige um nome
+`actions.runner.<nome>.service` cujo arquivo exista em
+`~gh-agents/.config/systemd/user/`, executa `systemctl --user` com lista de
+argumentos, sem shell e sem sudo, e recusa o timer de limpeza. A chave de
+`helio` não recebe esses comandos. O GitHub App não ganha permissões.
+
+- **Reiniciar** executa `systemctl --user restart`. O runner trata o SIGTERM
+  como desligamento e cancela o job em andamento; a confirmação avisa quando
+  o GitHub informa um job.
+- **Drenar** espera o job atual terminar e então para a unit. O painel
+  consulta a última leitura do GitHub a cada 15 s; quando ela não mostra
+  job, pede a parada à ponte, que antes confere se ainda existe um processo
+  `Runner.Worker` no cgroup da unit. Se existir, a unit continua ativa e o
+  painel tenta de novo. A espera pode ser cancelada e termina em 2 h sem
+  parar a unit. O runner não tem um modo que recuse novos jobs, e parar a
+  unit é a única forma de impedi-los sem desregistrá-lo no GitHub; por isso
+  um job atribuído nos segundos entre a última verificação e a parada pode
+  ser cancelado.
+- Uma unit drenada fica parada até **Iniciar** (o mesmo `restart`). Enquanto
+  isso, as leituras continuam registradas, mas a parada planejada não gera
+  alerta nem aparece como incidente.
+
+Cada pedido é gravado na tabela `runner_unit_ops` (ação, resultado,
+horários) e no log do serviço. Se o serviço reiniciar durante uma drenagem,
+a operação fica registrada como interrompida.
+
+Para atualizar um painel já instalado, reinstale a ponte **antes** de
+publicar o novo binário; a versão anterior recusa os comandos novos:
+
+```bash
+scripts/setup-runner-collector.sh
+```
 
 Inicie o serviço:
 

@@ -198,6 +198,39 @@ autenticação às portas 587 e 465 expiraram após 8 s. Porta, TLS e mecanismos
 de auth continuam sem confirmação; verificar serviço e firewall no host de
 e-mail antes de criar a conta e ativar o canal.
 
+## Operação de units de runner (fase de operações, `v0.2`)
+
+Restart e drenagem das units `actions.runner.<runner-name>.service` do
+`gh-agents` (issue #7).
+
+- **Mecanismo privilegiado mínimo**: a ponte SSH forçada da chave
+  `gh-agents` (`ssh-readonly.py runner-units`) aceita, além da leitura por
+  digest, exatamente `runner-restart <unit>` e `runner-drain <unit>`. A unit
+  precisa casar com `actions\.runner\.[A-Za-z0-9._-]+\.service` e existir
+  em `~/.config/systemd/user/` da própria conta. `systemctl --user` roda com
+  lista de argumentos, sem shell e sem sudo. A chave de `helio` continua
+  somente leitura; o GitHub App não ganha permissão.
+- **Restart**: `systemctl --user restart`. A unit gerada pelo `lib.sh` do
+  gh-agents usa `KillSignal=SIGTERM`; o `runsvc.sh` repassa o sinal ao
+  runner, que encerra e cancela o job em andamento. O painel avisa isso na
+  confirmação.
+- **Drenagem**: o runner não oferece pausa, e a API do GitHub só permite
+  remover o registro. O painel então espera: a cada 15 s, se a última
+  leitura do GitHub (até 2 min) não mostra o runner ocupado, envia
+  `runner-drain`; a ponte recusa (saída 75) enquanto houver `Runner.Worker`
+  no cgroup da unit e, sem ele, executa `systemctl --user stop`. Limite de
+  2 h; cancelável. Resta uma janela de segundos em que o GitHub pode atribuir
+  um job antes da parada.
+- **Estado**: tabela `runner_unit_ops` (migração 5) com ação, status
+  (`running|done|failed|cancelled|expired`), detalhe e horários; a última
+  operação por unit vai em `unit_ops` no `/api/dashboard`. Após cada
+  operação o coletor relê as units. Unit parada por drenagem concluída
+  registra o check como falho, sem `project_down`, e a UI a mostra como
+  drenada. Retenção de 90 dias, preservando a última operação de cada unit.
+- **API**: `POST /api/runner-units/{host}/{unit}/restart`, `.../drain` e
+  `.../drain/cancel`, com sessão e CSRF. Só aceita units nativas já
+  observadas em um host de `runner_unit_hosts`; uma operação por unit.
+
 ## Isolamento (inalterado do conceito)
 
 Usuário `vpsdash` próprio; chaves SSH em `~vpsdash/.ssh` (ed25519 por host,
