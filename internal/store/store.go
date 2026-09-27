@@ -133,6 +133,9 @@ CREATE TABLE alerts (
 CREATE INDEX idx_alerts_pending ON alerts(channel, sent_at);`,
 	`ALTER TABLE projects ADD COLUMN native INTEGER NOT NULL DEFAULT 0 CHECK(native IN (0,1));`,
 	`CREATE INDEX idx_runners_seen_at ON runners(seen_at);`,
+	`ALTER TABLE alerts ADD COLUMN project_id INTEGER REFERENCES projects(id);
+ALTER TABLE alerts ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_alerts_project_created ON alerts(project_id, created_at);`,
 }
 
 func migrate(db *sql.DB) error {

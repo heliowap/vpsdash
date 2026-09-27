@@ -107,8 +107,18 @@ func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
 }
 
 func (s *Store) QueueAlert(ctx context.Context, kind, subject, body string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alerts(kind,subject,body,sent_at,channel)
-SELECT ?,?,?,0,'smtp' WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE kind=? AND subject=? AND (sent_at=0 OR sent_at>?))`, kind, subject, body, kind, subject, time.Now().Add(-time.Hour).Unix())
+	return s.queueAlert(ctx, nil, kind, subject, body, time.Now())
+}
+
+// QueueProjectAlert records the alert against its project and the check time
+// that crossed the threshold, so the incident history can place it later.
+func (s *Store) QueueProjectAlert(ctx context.Context, projectID int64, kind, subject, body string, at time.Time) error {
+	return s.queueAlert(ctx, projectID, kind, subject, body, at)
+}
+
+func (s *Store) queueAlert(ctx context.Context, projectID any, kind, subject, body string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alerts(kind,subject,body,sent_at,channel,project_id,created_at)
+SELECT ?,?,?,0,'smtp',?,? WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE kind=? AND subject=? AND (sent_at=0 OR sent_at>?))`, kind, subject, body, projectID, at.Unix(), kind, subject, time.Now().Add(-time.Hour).Unix())
 	return err
 }
 

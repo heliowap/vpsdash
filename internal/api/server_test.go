@@ -621,3 +621,71 @@ func TestProjectRejectsLoopbackHealthURL(t *testing.T) {
 		t.Fatalf("private health URL = %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestProjectIncidentsRequiresSessionAndReturnsHistory(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "vpsdash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.UpsertHost(ctx, store.Host{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps"}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := st.UpsertNativeRunnerUnit(ctx, "vps", "gh-agents-runner-1.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i, ok := range []bool{true, false, false, false, true} {
+		if err := st.RecordCheck(ctx, project.ID, ok, "inactive", now.Add(time.Duration(i-5)*30*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := auth.New(hash, []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(config.Config{}, st, nil, nil, a).Handler()
+	get := func(path string, cookie *http.Cookie) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		if cookie != nil {
+			r.AddCookie(cookie)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	path := "/api/projects/" + strconv.FormatInt(project.ID, 10) + "/incidents"
+	if w := get(path, nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated incidents = %d", w.Code)
+	}
+	login := httptest.NewRecorder()
+	h.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password":"correct horse battery staple"}`)))
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	cookie := login.Result().Cookies()[0]
+	w := get(path, cookie)
+	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("incidents = %d %q: %s", w.Code, w.Header().Get("Cache-Control"), w.Body.String())
+	}
+	var history store.IncidentHistory
+	if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if history.ProjectID != project.ID || history.AlertThreshold != 3 || len(history.Incidents) != 1 ||
+		history.Incidents[0].State != "recovered" || history.Incidents[0].FailedChecks != 3 {
+		t.Fatalf("history = %+v", history)
+	}
+	if w := get("/api/projects/9999/incidents", cookie); w.Code != http.StatusNotFound {
+		t.Fatalf("missing project = %d", w.Code)
+	}
+	if w := get("/api/projects/abc/incidents", cookie); w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid project = %d", w.Code)
+	}
+}

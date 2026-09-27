@@ -74,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	private.HandleFunc("GET /api/dashboard", s.dashboard)
 	private.HandleFunc("GET /api/hosts/{id}/metrics", s.metrics)
 	private.HandleFunc("PATCH /api/projects/{id}", s.updateProject)
+	private.HandleFunc("GET /api/projects/{id}/incidents", s.projectIncidents)
 	private.HandleFunc("POST /api/repos/{owner}/{repo}/switch", s.switchRunner)
 	private.HandleFunc("POST /api/switches/bulk", s.bulkSwitch)
 	private.HandleFunc("POST /api/presets/{name}", s.preset)
@@ -381,6 +382,26 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, 200, points)
+}
+
+func (s *Server) projectIncidents(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		errorResponse(w, 400, "Projeto inválido.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	history, err := s.Store.ProjectIncidents(ctx, id, time.Now())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			errorResponse(w, 404, "Projeto não encontrado.")
+		} else {
+			errorResponse(w, 500, "Não foi possível ler o histórico de incidentes.")
+		}
+		return
+	}
+	jsonResponse(w, 200, history)
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {

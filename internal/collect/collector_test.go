@@ -296,6 +296,11 @@ func TestUnavailableProjectProbeDoesNotQueueDownAlert(t *testing.T) {
 	if err != nil || len(alerts) != 1 || alerts[0].Subject != "vps / example.service" {
 		t.Fatalf("confirmed failures did not queue one alert: %+v, %v", alerts, err)
 	}
+	history, err := s.ProjectIncidents(ctx, p.ID, time.Now())
+	if err != nil || len(history.Incidents) != 1 || history.Incidents[0].State != "open" ||
+		history.Incidents[0].FailedChecks != 3 || history.Incidents[0].AlertAt != history.Incidents[0].LastFailureAt {
+		t.Fatalf("incident history did not link the queued alert: %+v, %v", history, err)
+	}
 	_, collectorErrors, _ = c.Snapshot()
 	if collectorErrors["check:vps/example.service"] != "" {
 		t.Fatalf("collector error persisted after a successful probe: %+v", collectorErrors)
