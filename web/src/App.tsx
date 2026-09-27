@@ -6,7 +6,7 @@ import {
   Terminal, Wifi
 } from 'lucide-react'
 import { api, ApiError } from './api'
-import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session } from './types'
+import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session, UnitOp } from './types'
 
 type Tab = 'overview' | 'projects' | 'fleet' | 'sessions'
 type Notice = { kind: 'error' | 'success'; message: string } | null
@@ -63,6 +63,26 @@ function sessionCollectionCurrent(data: Dashboard, refreshFailed = false) {
   return !refreshFailed && !Object.keys(data.collector_errors).some(scope => scope.startsWith('host:') || scope.startsWith('sessions:')) &&
     data.hosts.filter(host => host.kind === 'vps').every(host => Boolean(host.seen_at && Date.now() / 1000 - host.seen_at <= 120)) &&
     data.sessions.every(session => !sessionUncertain(session, data))
+}
+
+function unitKey(host: string, unit: string) { return `${host}/${unit}` }
+
+function runnerNameForUnit(unit: string) { return unit.replace(/^actions\.runner\./, '').replace(/\.service$/, '') }
+
+function latestUnitOps(data: Dashboard) {
+  return new Map((data.unit_ops || []).map(op => [unitKey(op.host_id, op.unit), op]))
+}
+
+// A unit stopped by a completed drain is a planned stop, not a failure.
+function drainedUnit(project: Project, ops: Map<string, UnitOp>) {
+  const op = ops.get(unitKey(project.host_id, project.name))
+  return Boolean(project.native && op && op.action === 'drain' && op.status === 'done')
+}
+
+// Runners whose unit is still stopped after a completed drain.
+function drainedRunnerNames(data: Dashboard) {
+  const ops = latestUnitOps(data)
+  return new Set(data.projects.filter(project => project.check_ok === false && drainedUnit(project, ops)).map(project => runnerNameForUnit(project.name)))
 }
 
 const Sparkline = memo(function Sparkline({ points, label }: { points?: Metric[]; label: string }) {
@@ -126,8 +146,10 @@ type Incident = { id: string; title: string; detail: string; age?: number }
 function incidents(data: Dashboard): Incident[] {
   const items: Incident[] = []
   for (const host of data.hosts) if (host.kind === 'vps' && host.seen_at && !host.online && Date.now() / 1000 - host.seen_at <= 120) items.push({ id: `host-${host.id}`, title: `${host.id} está offline`, detail: 'Verifique o acesso SSH e a conexão pela tailnet.', age: host.seen_at })
-  for (const project of data.projects) if (project.monitored && project.check_ok === false) items.push({ id: `project-${project.id}`, title: `${project.name} falhou`, detail: `Em ${project.host_id} · verifique o critério monitorado.`, age: project.checked_at })
-  for (const runner of data.runners) if (runner.status === 'offline') items.push({ id: `runner-${runner.runner_id}`, title: `${runner.name} está offline`, detail: `Runner de ${runner.repo}.`, age: runner.seen_at })
+  const unitOps = latestUnitOps(data)
+  const drainedRunners = drainedRunnerNames(data)
+  for (const project of data.projects) if (project.monitored && project.check_ok === false && !drainedUnit(project, unitOps)) items.push({ id: `project-${project.id}`, title: `${project.name} falhou`, detail: `Em ${project.host_id} · verifique o critério monitorado.`, age: project.checked_at })
+  for (const runner of data.runners) if (runner.status === 'offline' && !drainedRunners.has(runner.name)) items.push({ id: `runner-${runner.runner_id}`, title: `${runner.name} está offline`, detail: `Runner de ${runner.repo}.`, age: runner.seen_at })
   for (const [scope] of Object.entries(data.collector_errors)) {
     const [kind, id = ''] = scope.split(':', 2)
     if (kind === 'host' && items.some(item => item.id === `host-${id}`)) continue
@@ -305,12 +327,14 @@ function Projects({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; on
   })
   const filtered = candidates.filter(project => `${project.name} ${project.host_id} ${project.source}`.toLocaleLowerCase('pt-BR').includes(query.toLocaleLowerCase('pt-BR')))
   const visible = showAll || query ? filtered : filtered.slice(0, 8)
+  const unitOps = latestUnitOps(data)
   function row(project: Project) {
     const open = expanded === project.id
+    const drained = drainedUnit(project, unitOps) && project.check_ok === false
     const contents = <>
-      <span className={`status-dot ${!project.monitored || project.check_ok === undefined ? 'is-unknown' : project.check_ok ? 'is-good' : 'is-bad'}`} />
+      <span className={`status-dot ${drained || !project.monitored || project.check_ok === undefined ? 'is-unknown' : project.check_ok ? 'is-good' : 'is-bad'}`} />
       <span className="row-copy"><strong>{project.name}</strong><small>{project.host_id} · {project.native ? 'unit nativa' : project.source} · {project.monitored ? age(project.checked_at) : 'candidato'}</small></span>
-      <span className={`state-stamp ${project.check_ok === false ? 'stamp-bad' : ''}`}>{project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
+      <span className={`state-stamp ${drained ? 'stamp-unknown' : project.check_ok === false ? 'stamp-bad' : ''}`}>{drained ? 'Drenada' : project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
     </>
     return <article className="project-row" key={project.id}>
       <button className="row-main" type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : project.id)}>{contents}{open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}</button>
@@ -460,6 +484,7 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
   ]))
   const unknownPresetTargets = presetTargets.filter(target => !target.currentKnown).length
   const pendingPreset = presets.find(preset => preset.id === presetPending)
+  const drainedRunners = drainedRunnerNames(data)
   const queue = Object.entries(data.queued).flatMap(([repo, runs]) => runs.map(run => ({ repo, ...run })))
   async function applyPreset(name: string) {
     setBusy(true); setFeedback(null)
@@ -476,10 +501,11 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
   return <div className="page-body"><div className="page-title"><h1>Frota</h1><p>Runners, fila, logs de execução e backends operados pelas variáveis que os workflows já leem.</p></div>
     {!data.repositories.length ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">Adicione repositórios ao inventário para iniciar a leitura de runners e fila.</div></section> : !fleetObserved ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">{fleetErrors ? 'GitHub App indisponível. Runners e fila ainda são desconhecidos.' : 'Aguardando a primeira leitura do GitHub App. Runners e fila ainda são desconhecidos.'}</div></section> : <>
       {fleetUncertain && <p className="notice notice-error" role="alert"><AlertCircle size={18} />Leitura da frota parcial ou desatualizada. Confirme o estado antes de agir.</p>}
-      <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
+      <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} drained={drainedRunners.has(runner.name)} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
       <section className="ledger-section"><div className="section-heading"><h2>Fila</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}`}</span></div>{queue.length ? <div className="ruled-list">{queue.map(run => <a className="queue-row" key={`${run.repo}-${run.id}`} href={run.html_url} target="_blank" rel="noreferrer"><Clock3 size={18} /><span><strong>{run.display_title || run.name}</strong><small>{run.repo}</small></span><ArrowUpRight size={17} /></a>)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual da fila não está disponível.' : 'Nenhum job aguardando runner.'}</div>}</section>
     </>}
     {data.repositories.length > 0 && <Executions />}
+    <RunnerUnits data={data} csrf={csrf} onRefresh={onRefresh} refreshFailed={refreshFailed} />
     <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui. Os minutos são um proxy para comparar backends, não a cobrança do GitHub.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className={`state-stamp ${switchError(repo) ? 'stamp-bad' : 'stamp-unknown'}`}>{switchError(repo) || repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoMinutesBlock repo={repo} state={minutes} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
     {hasOperations && <>
       <section className="ledger-section">
@@ -667,9 +693,76 @@ function Executions() {
   </section>
 }
 
-function RunnerRow({ runner, uncertain }: { runner: Runner; uncertain: boolean }) {
-  const lastState = runner.job || (runner.busy ? 'Ocupado' : runner.status === 'online' ? 'Livre' : 'Offline')
-  return <div className="runner-row"><span className={`status-dot ${uncertain ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
+const drainHours = 2
+
+function opSummary(op: UnitOp) {
+  const when = age(op.finished_at || op.requested_at)
+  if (op.status === 'running') return op.action === 'restart' ? 'Reinício enviado ao systemd…' : op.detail || 'Drenagem iniciada. Verificando se há job em andamento…'
+  const title = op.action === 'restart'
+    ? { done: 'Reinício concluído', failed: 'Reinício falhou', cancelled: 'Reinício cancelado', expired: 'Reinício expirou' }[op.status]
+    : { done: 'Drenagem concluída', failed: 'Drenagem falhou', cancelled: 'Drenagem cancelada', expired: 'Drenagem expirou' }[op.status]
+  return `${title} ${when}${op.detail ? ` · ${op.detail}` : ''}`
+}
+
+function RunnerUnits({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf: string; onRefresh: () => void; refreshFailed: boolean }) {
+  const units = data.projects.filter(project => project.native && project.name.startsWith('actions.runner.'))
+  if (!units.length) return null
+  const ops = latestUnitOps(data)
+  return <section className="ledger-section" aria-labelledby="units-heading">
+    <div className="section-heading"><div><h2 id="units-heading">Units dos runners</h2><p>Serviços <code>systemctl --user</code> da conta gh-agents. Reiniciar ou parar um runner cancela o job em andamento; drenar espera o job terminar.</p></div><span className="section-count">{units.length} {units.length === 1 ? 'unit' : 'units'}</span></div>
+    <div className="ruled-list">{units.map(unit => <RunnerUnitRow key={unit.id} unit={unit} op={ops.get(unitKey(unit.host_id, unit.name))} data={data} csrf={csrf} onRefresh={onRefresh} refreshFailed={refreshFailed} />)}</div>
+  </section>
+}
+
+function RunnerUnitRow({ unit, op, data, csrf, onRefresh, refreshFailed }: { unit: Project; op?: UnitOp; data: Dashboard; csrf: string; onRefresh: () => void; refreshFailed: boolean }) {
+  const [confirm, setConfirm] = useState<'restart' | 'drain' | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const runnerName = runnerNameForUnit(unit.name)
+  const runner = data.runners.find(item => item.name === runnerName)
+  const fleetCurrent = !refreshFailed && data.fleet_seen_at > 0 && Date.now() / 1000 - data.fleet_seen_at <= 120 && !data.collector_errors[`github:${runner?.repo}`]
+  const runnerState = !runner ? 'GitHub sem leitura deste runner' : !fleetCurrent ? `GitHub não confirmado · última leitura ${age(runner.seen_at)}` : runner.status === 'offline' ? 'GitHub: offline' : runner.busy ? `GitHub: ocupado${runner.job ? ` · ${runner.job}` : ''}` : 'GitHub: livre'
+  const unitUncertain = refreshFailed || Boolean(data.collector_errors[`runner-units:${unit.host_id}`]) || !unit.checked_at || Date.now() / 1000 - unit.checked_at > 120
+  const running = op?.status === 'running'
+  const drained = op?.action === 'drain' && op.status === 'done' && unit.check_ok === false
+  const active = unit.check_ok === true
+  const stamp = running ? op.action === 'restart' ? 'Reiniciando' : 'Drenando' : unitUncertain ? 'Não confirmado' : drained ? 'Drenada' : unit.check_ok === undefined ? 'Aguardando' : active ? 'Ativa' : 'Parada'
+  const stampClass = running || unitUncertain || drained || unit.check_ok === undefined ? 'stamp-unknown' : active ? '' : 'stamp-bad'
+  const busyJob = Boolean(runner?.busy && fleetCurrent)
+  async function run(action: 'restart' | 'drain' | 'drain/cancel') {
+    setBusy(true); setError('')
+    try { await api.runnerUnit(unit.host_id, unit.name, action, csrf); setConfirm(null); onRefresh() }
+    catch (err) { setError(err instanceof Error ? err.message : 'Operação não registrada.') }
+    finally { setBusy(false) }
+  }
+  const label = `${runnerName} em ${unit.host_id}`
+  return <article className="unit-row">
+    <div className="unit-head">
+      <span className={`status-dot ${stampClass === '' ? 'is-good' : stampClass === 'stamp-bad' ? 'is-bad' : 'is-unknown'}`} aria-hidden="true" />
+      <div className="unit-copy"><strong>{runnerName}</strong><small>{unit.host_id} · {unitUncertain ? `unit não confirmada · ${age(unit.checked_at)}` : `unit ${active ? 'ativa' : 'inativa'} · ${age(unit.checked_at)}`} · {runnerState}</small></div>
+      <span className={`state-stamp ${stampClass}`}>{stamp}</span>
+    </div>
+    <div className="unit-actions">
+      {running ? op.action === 'drain' ? <button type="button" className="button button-small" disabled={busy} onClick={() => void run('drain/cancel')} aria-label={`Cancelar drenagem de ${label}`}>{busy ? 'Cancelando…' : 'Cancelar drenagem'}</button> : <span className="muted-text">Aguardando o systemd…</span> : <>
+        <button type="button" className="button button-small" disabled={busy} aria-expanded={confirm === 'restart'} onClick={() => { setConfirm(confirm === 'restart' ? null : 'restart'); setError('') }} aria-label={`${active ? 'Reiniciar' : 'Iniciar'} ${label}`}>{active ? 'Reiniciar' : 'Iniciar'}</button>
+        {!drained && active && <button type="button" className="button button-small" disabled={busy} aria-expanded={confirm === 'drain'} onClick={() => { setConfirm(confirm === 'drain' ? null : 'drain'); setError('') }} aria-label={`Drenar ${label}`}>Drenar</button>}
+      </>}
+    </div>
+    {confirm && !running && <div className="inline-confirm unit-confirm" role="group" aria-label={confirm === 'restart' ? `Confirmar reinício de ${label}` : `Confirmar drenagem de ${label}`}>
+      <span>{confirm === 'restart'
+        ? <>{active ? 'Reiniciar' : 'Iniciar'} <b>{unit.name}</b>? {busyJob ? <b className="confirm-warning">O GitHub informa um job em andamento; reiniciar agora cancela esse job.</b> : active ? 'Um job que esteja em andamento será cancelado.' : 'O runner volta a aceitar jobs.'}</>
+        : <>Drenar <b>{unit.name}</b>? O painel espera o job atual terminar e então para a unit. Parada, ela não aceita novos jobs até ser iniciada de novo. A espera termina em {drainHours} h sem parar a unit.</>}</span>
+      <div><button type="button" className="button button-small button-primary" disabled={busy} onClick={() => void run(confirm)}>{busy ? 'Enviando…' : confirm === 'restart' ? active ? 'Confirmar reinício' : 'Confirmar início' : 'Confirmar drenagem'}</button><button type="button" className="button button-small button-plain" onClick={() => setConfirm(null)}>Cancelar</button></div>
+    </div>}
+    {error && <p className="inline-feedback is-error" role="alert">{error}</p>}
+    {op && (running || drained || Date.now() / 1000 - (op.finished_at || op.requested_at) < 3600) && <p className={`inline-feedback ${op.status === 'failed' || op.status === 'expired' ? 'is-error' : ''}`} role="status">{opSummary(op)}</p>}
+  </article>
+}
+
+function RunnerRow({ runner, uncertain, drained }: { runner: Runner; uncertain: boolean; drained: boolean }) {
+  const lastState = runner.job || (runner.busy ? 'Ocupado' : runner.status === 'online' ? 'Livre' : drained ? 'Offline · unit drenada pelo painel' : 'Offline')
+  const plannedStop = drained && runner.status === 'offline'
+  return <div className="runner-row"><span className={`status-dot ${uncertain || plannedStop ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain || plannedStop ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : plannedStop ? 'Drenado' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
 }
 
 const agentStateLabels: Record<string, string> = { working: 'Trabalhando', waiting: 'Esperando input', idle: 'Ociosa' }
@@ -737,7 +830,7 @@ export default function App() {
   useEffect(() => { api.session().then(setSession).catch(() => setSession({ authenticated: false, csrf: '' })) }, [])
   useEffect(() => { if (!session?.authenticated) return; void refresh(); const timer = window.setInterval(() => void refresh(), 30_000); return () => window.clearInterval(timer) }, [refresh, session?.authenticated])
   useEffect(() => {
-    if (!session?.authenticated || !data?.repositories.some(repo => repo.error === 'GitHub em coleta')) return
+    if (!session?.authenticated || !(data?.repositories.some(repo => repo.error === 'GitHub em coleta') || data?.unit_ops?.some(op => op.status === 'running'))) return
     const timer = window.setTimeout(() => void refresh(), 3_000)
     return () => window.clearTimeout(timer)
   }, [data, refresh, session?.authenticated])

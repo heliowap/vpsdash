@@ -1,4 +1,4 @@
-import type { Dashboard, IncidentHistory, JobList, JobLog, Metric, MinutesReport } from './types'
+import type { Dashboard, IncidentHistory, JobList, JobLog, Metric, MinutesReport, UnitOp } from './types'
 
 export type SessionState = { authenticated: boolean; csrf: string }
 
@@ -35,5 +35,7 @@ export const api = {
   jobs: () => request<JobList>('/api/jobs'),
   jobLog: (repo: string, id: number, signal?: AbortSignal) =>
     request<JobLog>(`/api/repos/${repo.split('/').map(encodeURIComponent).join('/')}/jobs/${id}/log`, { signal }),
-  preset: (name: string, csrf: string) => request<{ results: Record<string, string> }>(`/api/presets/${name}`, { method: 'POST' }, csrf)
+  preset: (name: string, csrf: string) => request<{ results: Record<string, string> }>(`/api/presets/${name}`, { method: 'POST' }, csrf),
+  runnerUnit: (host: string, unit: string, action: 'restart' | 'drain' | 'drain/cancel', csrf: string) =>
+    request<UnitOp>(`/api/runner-units/${encodeURIComponent(host)}/${encodeURIComponent(unit)}/${action}`, { method: 'POST' }, csrf)
 }
