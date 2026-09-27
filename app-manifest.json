@@ -1,0 +1,17 @@
+{
+  "name": "gh-agents-ops",
+  "url": "https://github.com/heliowap/vpsdash",
+  "description": "Private runner fleet and Actions variable operations for vpsdash",
+  "hook_attributes": {
+    "url": "https://github.com/heliowap/vpsdash",
+    "active": false
+  },
+  "redirect_url": "https://github.com/heliowap/vpsdash",
+  "public": false,
+  "default_permissions": {
+    "actions": "read",
+    "administration": "write",
+    "actions_variables": "write"
+  },
+  "default_events": []
+}

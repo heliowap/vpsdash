@@ -19,6 +19,11 @@ implementação chegar (depois do gh-agents). Integrações já contratadas aqui
   e-mail. Porta/auth SMTP: **pendente na implementação**.
 - Origem: conversa paralela de 2026-09-24, integrada ao planejamento.
 
+> Atualização de implantação (2026-09-26): o painel passou a aceitar acesso
+> público por HTTPS e login, além da rota privada Tailscale Serve. O processo
+> permanece em loopback. A configuração atual está no README e no PRODUCT.md;
+> a topologia abaixo registra o conceito original.
+
 ## Arquitetura
 
 Binário único Go servindo API + SPA React/Vite embutida (`embed.FS`).
@@ -84,7 +89,7 @@ Isolamento (contrato com gh-agents): usuários separados —
    `CI_RUNNER`) que o workflow lê — nenhum mecanismo paralelo.
 3. O repo do dashboard é o segundo habilitado no gh-agents (dogfood).
 4. Credencial: GitHub App `gh-agents-ops` (manifest gerado pelo repo
-   gh-agents), instalado em heliowap + orgs — permissions: `actions:write`,
+   gh-agents), instalado em heliowap + orgs — permissions: `actions:read`,
    `administration` (runners), `variables` (o switch), `metadata`.
 
 ## Pendências para o spec completo (fase B)

@@ -22,7 +22,8 @@ escopo excessivo e prende a operação a uma conta pessoal.
 - **Nome**: `gh-agents-ops` (slug gerado: `gh-agents-ops`; se ocupado,
   `vpsdash-ops`).
 - **Repository permissions**:
-  - `actions`: read/write — listar runs, re-run.
+  - `actions`: read — listar runs. Re-run fica para uma fase posterior e
+    exigirá elevar a permissão do App antes de expor o controle no painel.
   - `administration`: read/write — listar/remover self-hosted runners.
   - `variables`: read/write — `PATCH
     /repos/{owner}/{repo}/actions/variables/{CI_RUNNER,AGENT_RUNNER}` (o
@@ -134,7 +135,9 @@ CREATE TABLE alerts (
 | runners/fila GitHub | 30 s | REST via App (`/actions/runners`, `queued`) | burst de 10 s enquanto `busy` |
 
 Polling é sequencial por host e paralelo entre hosts (um worker por host,
-timeout SSH 10 s, circuit-breaker: 3 falhas → host `unreachable` por 5 min).
+timeout SSH 10 s, circuit-breaker: 3 falhas de comando SSH → host
+`unreachable` por 5 min; erros de parsing e armazenamento ficam no coletor
+específico e não derrubam a presença do host).
 
 ### Retenção
 
@@ -142,7 +145,8 @@ timeout SSH 10 s, circuit-breaker: 3 falhas → host `unreachable` por 5 min).
 |---|---|---|
 | `metrics` | 30 d | `DELETE … WHERE ts < now-30d`, nightly 03:00 |
 | `checks` | 30 d | idem |
-| `tmux_sessions`, `runners` | estado corrente | upsert por chave; ausente 10 min → delete |
+| `tmux_sessions` | último snapshot confirmado por host | substituído após coleta completa; falha conserva a observação e a UI marca "Não confirmado" |
+| `runners` | estado corrente | upsert por chave; ausente 10 min → delete; falha da frota marca estado incerto na UI |
 | `alerts` | 90 d | nightly |
 | DB | — | `VACUUM` semanal (domingo 03:30) |
 
@@ -180,6 +184,12 @@ via `allmedical-mail:587` STARTTLS, auth `vpsdash@intrador.com.br`
 allmedical-mail:587` no próprio host e registrar o resultado aqui antes do
 primeiro alerta real. Sem essa coleta, alerts ficam enfileirados e o painel
 mostra o badge "canal de alerta não provisionado".
+
+Tentativa de coleta em 2026-09-26 no `intrador-tech-vps`: o dispositivo
+`allmedical-mail` apareceu online na tailnet, mas conexões SMTP sem
+autenticação às portas 587 e 465 expiraram após 8 s. Porta, TLS e mecanismos
+de auth continuam sem confirmação; verificar serviço e firewall no host de
+e-mail antes de criar a conta e ativar o canal.
 
 ## Isolamento (inalterado do conceito)
 

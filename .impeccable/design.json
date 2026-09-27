@@ -1,0 +1,452 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-26T13:32:57Z",
+  "title": "Design System: vpsdash",
+  "extensions": {
+    "colorMeta": {
+      "action": {
+        "role": "primary",
+        "displayName": "Deep Teal",
+        "tonalRamp": [
+          "oklch(15% 0.055 204.0)",
+          "oklch(26% 0.055 204.0)",
+          "oklch(37% 0.055 204.0)",
+          "oklch(48% 0.055 204.0)",
+          "oklch(59% 0.055 204.0)",
+          "oklch(70% 0.055 204.0)",
+          "oklch(82% 0.055 204.0)",
+          "oklch(95% 0.055 204.0)"
+        ]
+      },
+      "action-hover": {
+        "role": "primary",
+        "displayName": "Deep Teal Hover",
+        "tonalRamp": [
+          "oklch(15% 0.045 204.3)",
+          "oklch(26% 0.045 204.3)",
+          "oklch(37% 0.045 204.3)",
+          "oklch(48% 0.045 204.3)",
+          "oklch(59% 0.045 204.3)",
+          "oklch(70% 0.045 204.3)",
+          "oklch(82% 0.045 204.3)",
+          "oklch(95% 0.045 204.3)"
+        ]
+      },
+      "on-action": {
+        "role": "primary",
+        "displayName": "White on Teal",
+        "tonalRamp": [
+          "oklch(15% 0.000 89.9)",
+          "oklch(26% 0.000 89.9)",
+          "oklch(37% 0.000 89.9)",
+          "oklch(48% 0.000 89.9)",
+          "oklch(59% 0.000 89.9)",
+          "oklch(70% 0.000 89.9)",
+          "oklch(82% 0.000 89.9)",
+          "oklch(95% 0.000 89.9)"
+        ]
+      },
+      "healthy": {
+        "role": "secondary",
+        "displayName": "Observed Green",
+        "tonalRamp": [
+          "oklch(15% 0.069 169.3)",
+          "oklch(26% 0.069 169.3)",
+          "oklch(37% 0.069 169.3)",
+          "oklch(48% 0.069 169.3)",
+          "oklch(59% 0.069 169.3)",
+          "oklch(70% 0.069 169.3)",
+          "oklch(82% 0.069 169.3)",
+          "oklch(95% 0.069 169.3)"
+        ]
+      },
+      "healthy-paper": {
+        "role": "secondary",
+        "displayName": "Standard State Tint",
+        "tonalRamp": [
+          "oklch(15% 0.015 158.2)",
+          "oklch(26% 0.015 158.2)",
+          "oklch(37% 0.015 158.2)",
+          "oklch(48% 0.015 158.2)",
+          "oklch(59% 0.015 158.2)",
+          "oklch(70% 0.015 158.2)",
+          "oklch(82% 0.015 158.2)",
+          "oklch(95% 0.015 158.2)"
+        ]
+      },
+      "attention": {
+        "role": "tertiary",
+        "displayName": "Incident Rust",
+        "tonalRamp": [
+          "oklch(15% 0.148 37.7)",
+          "oklch(26% 0.148 37.7)",
+          "oklch(37% 0.148 37.7)",
+          "oklch(48% 0.148 37.7)",
+          "oklch(59% 0.148 37.7)",
+          "oklch(70% 0.148 37.7)",
+          "oklch(82% 0.148 37.7)",
+          "oklch(95% 0.148 37.7)"
+        ]
+      },
+      "failure-paper": {
+        "role": "tertiary",
+        "displayName": "Failure Tint",
+        "tonalRamp": [
+          "oklch(15% 0.021 48.5)",
+          "oklch(26% 0.021 48.5)",
+          "oklch(37% 0.021 48.5)",
+          "oklch(48% 0.021 48.5)",
+          "oklch(59% 0.021 48.5)",
+          "oklch(70% 0.021 48.5)",
+          "oklch(82% 0.021 48.5)",
+          "oklch(95% 0.021 48.5)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Ledger Paper",
+        "tonalRamp": [
+          "oklch(15% 0.007 88.6)",
+          "oklch(26% 0.007 88.6)",
+          "oklch(37% 0.007 88.6)",
+          "oklch(48% 0.007 88.6)",
+          "oklch(59% 0.007 88.6)",
+          "oklch(70% 0.007 88.6)",
+          "oklch(82% 0.007 88.6)",
+          "oklch(95% 0.007 88.6)"
+        ]
+      },
+      "raised-paper": {
+        "role": "neutral",
+        "displayName": "Raised Paper",
+        "tonalRamp": [
+          "oklch(15% 0.005 78.3)",
+          "oklch(26% 0.005 78.3)",
+          "oklch(37% 0.005 78.3)",
+          "oklch(48% 0.005 78.3)",
+          "oklch(59% 0.005 78.3)",
+          "oklch(70% 0.005 78.3)",
+          "oklch(82% 0.005 78.3)",
+          "oklch(95% 0.005 78.3)"
+        ]
+      },
+      "rail-paper": {
+        "role": "neutral",
+        "displayName": "Rail Paper",
+        "tonalRamp": [
+          "oklch(15% 0.007 97.4)",
+          "oklch(26% 0.007 97.4)",
+          "oklch(37% 0.007 97.4)",
+          "oklch(48% 0.007 97.4)",
+          "oklch(59% 0.007 97.4)",
+          "oklch(70% 0.007 97.4)",
+          "oklch(82% 0.007 97.4)",
+          "oklch(95% 0.007 97.4)"
+        ]
+      },
+      "selected-paper": {
+        "role": "neutral",
+        "displayName": "Selected Paper",
+        "tonalRamp": [
+          "oklch(15% 0.014 174.1)",
+          "oklch(26% 0.014 174.1)",
+          "oklch(37% 0.014 174.1)",
+          "oklch(48% 0.014 174.1)",
+          "oklch(59% 0.014 174.1)",
+          "oklch(70% 0.014 174.1)",
+          "oklch(82% 0.014 174.1)",
+          "oklch(95% 0.014 174.1)"
+        ]
+      },
+      "editor-paper": {
+        "role": "neutral",
+        "displayName": "Editor Paper",
+        "tonalRamp": [
+          "oklch(15% 0.009 128.6)",
+          "oklch(26% 0.009 128.6)",
+          "oklch(37% 0.009 128.6)",
+          "oklch(48% 0.009 128.6)",
+          "oklch(59% 0.009 128.6)",
+          "oklch(70% 0.009 128.6)",
+          "oklch(82% 0.009 128.6)",
+          "oklch(95% 0.009 128.6)"
+        ]
+      },
+      "preview-paper": {
+        "role": "neutral",
+        "displayName": "Preview Paper",
+        "tonalRamp": [
+          "oklch(15% 0.010 155.1)",
+          "oklch(26% 0.010 155.1)",
+          "oklch(37% 0.010 155.1)",
+          "oklch(48% 0.010 155.1)",
+          "oklch(59% 0.010 155.1)",
+          "oklch(70% 0.010 155.1)",
+          "oklch(82% 0.010 155.1)",
+          "oklch(95% 0.010 155.1)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "tonalRamp": [
+          "oklch(15% 0.010 186.2)",
+          "oklch(26% 0.010 186.2)",
+          "oklch(37% 0.010 186.2)",
+          "oklch(48% 0.010 186.2)",
+          "oklch(59% 0.010 186.2)",
+          "oklch(70% 0.010 186.2)",
+          "oklch(82% 0.010 186.2)",
+          "oklch(95% 0.010 186.2)"
+        ]
+      },
+      "muted-ink": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "tonalRamp": [
+          "oklch(15% 0.012 173.8)",
+          "oklch(26% 0.012 173.8)",
+          "oklch(37% 0.012 173.8)",
+          "oklch(48% 0.012 173.8)",
+          "oklch(59% 0.012 173.8)",
+          "oklch(70% 0.012 173.8)",
+          "oklch(82% 0.012 173.8)",
+          "oklch(95% 0.012 173.8)"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "tonalRamp": [
+          "oklch(15% 0.010 140.5)",
+          "oklch(26% 0.010 140.5)",
+          "oklch(37% 0.010 140.5)",
+          "oklch(48% 0.010 140.5)",
+          "oklch(59% 0.010 140.5)",
+          "oklch(70% 0.010 140.5)",
+          "oklch(82% 0.010 140.5)",
+          "oklch(95% 0.010 140.5)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "brand": {
+        "displayName": "Brand",
+        "purpose": "Product mark in the rail and login view."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Condition sentence and page titles."
+      },
+      "section-title": {
+        "displayName": "Section Title",
+        "purpose": "Ruled ledger section headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Operational descriptions and introductions."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Status, counts, and measurement captions."
+      },
+      "button": {
+        "displayName": "Button",
+        "purpose": "Compact control text."
+      },
+      "measure": {
+        "displayName": "Measure",
+        "purpose": "Aligned host measurements."
+      },
+      "timestamp": {
+        "displayName": "Timestamp",
+        "purpose": "Last observation and incident age."
+      },
+      "activity-number": {
+        "displayName": "Activity Number",
+        "purpose": "Quiet aggregate counts."
+      }
+    },
+    "shadows": [
+      {
+        "name": "login-ambient",
+        "value": "0 14px 35px rgba(33, 49, 43, .08)",
+        "purpose": "Only the login sheet floats above paper."
+      },
+      {
+        "name": "mobile-nav",
+        "value": "0 -8px 30px rgba(38, 49, 43, .06)",
+        "purpose": "Separates the fixed phone navigation from scrolling content."
+      },
+      {
+        "name": "field-focus",
+        "value": "0 0 0 3px #c9dddc",
+        "purpose": "Visible focus ring inside editable fields."
+      },
+      {
+        "name": "observed-dot",
+        "value": "0 0 0 4px #dce8e2",
+        "purpose": "Observation halo around the healthy status dot."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-state",
+        "value": "0.18s ease",
+        "purpose": "Navigation, button background, color, and border transitions."
+      },
+      {
+        "name": "refresh-turn",
+        "value": "0.7s ease",
+        "purpose": "Single rotation while refresh is pending."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0.01ms",
+        "purpose": "Motion duration override when reduced motion is requested."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "icon-rail",
+        "value": "1080px"
+      },
+      {
+        "name": "phone",
+        "value": "720px"
+      },
+      {
+        "name": "narrow-phone",
+        "value": "390px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Commits an operation after its target and change are clear.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">Confirmar alterações</button>",
+      "css": ".ds-btn-primary { min-height:40px; padding:9px 15px; border:1px solid var(--action); border-radius:6px; background:var(--action); color:#fff; font:600 13px \"IBM Plex Sans\",sans-serif; cursor:pointer; transition:background .18s ease,border-color .18s ease; } .ds-btn-primary:hover:not(:disabled) { background:#0f383c; } .ds-btn-primary:focus-visible { outline:3px solid #3a777c; outline-offset:3px; } .ds-btn-primary:active:not(:disabled) { background:#0f383c; } .ds-btn-primary:disabled { opacity:.55; cursor:not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Opens a preview or cancels a pending action.",
+      "html": "<button class=\"ds-btn-secondary\" type=\"button\">Ver prévia</button>",
+      "css": ".ds-btn-secondary { min-height:40px; padding:9px 15px; border:1px solid #aab7b0; border-radius:6px; background:var(--raised); color:var(--ink); font:600 13px \"IBM Plex Sans\",sans-serif; cursor:pointer; transition:background .18s ease,border-color .18s ease; } .ds-btn-secondary:hover:not(:disabled) { background:#e7eeea; border-color:var(--action); } .ds-btn-secondary:focus-visible { outline:3px solid #3a777c; outline-offset:3px; } .ds-btn-secondary:active:not(:disabled) { background:#dce8e4; } .ds-btn-secondary:disabled { opacity:.55; cursor:not-allowed; }"
+    },
+    {
+      "name": "Candidate Search",
+      "kind": "input",
+      "refersTo": "text-field",
+      "description": "Keeps discovered service candidates scannable.",
+      "html": "<label class=\"ds-search-label\">Buscar candidatos<input class=\"ds-search\" type=\"search\" placeholder=\"Buscar por nome, host ou origem\"></label>",
+      "css": ".ds-search-label { display:grid; gap:7px; color:var(--muted); font:600 12px \"IBM Plex Sans\",sans-serif; max-width:380px; } .ds-search { width:100%; height:40px; padding:0 11px; border:1px solid #adb7b0; border-radius:6px; background:var(--raised); color:var(--ink); font:400 16px \"IBM Plex Sans\",sans-serif; } .ds-search::placeholder { color:#6b7470; } .ds-search:hover { border-color:var(--action); } .ds-search:focus { outline:none; border-color:var(--action); box-shadow:0 0 0 3px #c9dddc; }"
+    },
+    {
+      "name": "Active Navigation",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "Marks the current ledger destination in the desktop rail.",
+      "html": "<button class=\"ds-nav-active\" type=\"button\" aria-current=\"page\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M22 12h-4l-3 9L9 3l-3 9H2\"/></svg><span>Visão geral</span></button>",
+      "css": ".ds-nav-active { width:198px; display:flex; align-items:center; gap:13px; padding:12px 14px; border:0; border-radius:8px; background:#dce8e4; color:var(--action); text-align:left; font:700 16px \"IBM Plex Sans\",sans-serif; cursor:pointer; transition:background .18s ease,color .18s ease; } .ds-nav-active:hover { background:#d4e3de; } .ds-nav-active:focus-visible { outline:3px solid #3a777c; outline-offset:3px; }"
+    },
+    {
+      "name": "Project Ledger Row",
+      "kind": "custom",
+      "refersTo": "ledger-row",
+      "description": "A ruled subject row with context, state, and inline disclosure affordance.",
+      "html": "<button class=\"ds-ledger-row\" type=\"button\" aria-expanded=\"false\"><span class=\"ds-ledger-dot\" aria-hidden=\"true\"></span><span class=\"ds-ledger-copy\"><strong>Projeto observado</strong><small>host · docker · há 2 min</small></span><span class=\"ds-ledger-stamp\">Ativo</span><svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 18 6-6-6-6\"/></svg></button>",
+      "css": ".ds-ledger-row { width:100%; display:flex; align-items:center; gap:13px; padding:17px 0; border:0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); background:transparent; color:var(--ink); text-align:left; font-family:\"IBM Plex Sans\",sans-serif; cursor:pointer; } .ds-ledger-dot { flex:none; width:9px; height:9px; border-radius:50%; background:var(--healthy); } .ds-ledger-copy { flex:1; display:grid; gap:3px; min-width:0; } .ds-ledger-copy strong { font-size:15px; font-weight:600; } .ds-ledger-copy small { color:var(--muted); font-size:12px; } .ds-ledger-stamp { padding:5px 8px; border-radius:4px; background:#e0ebe4; color:var(--healthy); font-size:11px; font-weight:700; letter-spacing:.03em; text-transform:uppercase; } .ds-ledger-row > svg { color:var(--muted); flex:none; } .ds-ledger-row:hover .ds-ledger-copy strong { color:var(--action); text-decoration:underline; text-underline-offset:4px; } .ds-ledger-row:focus-visible { outline:3px solid #3a777c; outline-offset:3px; }"
+    },
+    {
+      "name": "Inline Project Editor",
+      "kind": "custom",
+      "refersTo": "inline-editor",
+      "description": "Reveals monitoring criteria directly beneath the selected project row.",
+      "html": "<form class=\"ds-inline-editor\"><label class=\"ds-inline-switch\"><input type=\"checkbox\" checked>Monitorar este projeto</label><label class=\"ds-inline-label\">URL de health<input class=\"ds-inline-field\" type=\"url\" placeholder=\"https://serviço/health\"></label><label class=\"ds-inline-label\">Serviços esperados<input class=\"ds-inline-field\" type=\"text\" placeholder=\"Nome do serviço\"></label><button class=\"ds-inline-save\" type=\"button\">Salvar monitoramento</button></form>",
+      "css": ".ds-inline-editor { display:grid; gap:17px; padding:18px 20px 20px; border-radius:8px; background:#ecefe9; color:var(--ink); font-family:\"IBM Plex Sans\",sans-serif; } .ds-inline-switch { display:flex; align-items:center; gap:9px; font-size:14px; font-weight:600; } .ds-inline-switch input { width:17px; height:17px; accent-color:var(--action); } .ds-inline-label { display:grid; gap:7px; color:var(--muted); font-size:12px; font-weight:600; } .ds-inline-field { height:40px; padding:0 11px; border:1px solid #adb7b0; border-radius:6px; background:var(--raised); color:var(--ink); font:400 16px \"IBM Plex Sans\",sans-serif; } .ds-inline-field:focus { outline:none; border-color:var(--action); box-shadow:0 0 0 3px #c9dddc; } .ds-inline-save { justify-self:start; min-height:36px; padding:7px 12px; border:1px solid var(--action); border-radius:6px; background:var(--action); color:#fff; font:600 13px \"IBM Plex Sans\",sans-serif; cursor:pointer; } .ds-inline-save:hover { background:#0f383c; } .ds-inline-save:focus-visible { outline:3px solid #3a777c; outline-offset:3px; }"
+    },
+    {
+      "name": "Standard State Stamp",
+      "kind": "chip",
+      "refersTo": "stamp-standard",
+      "description": "Pairs a non-failure state with explicit text; the label determines its meaning.",
+      "html": "<span class=\"ds-stamp-standard\">Aguardando</span>",
+      "css": ".ds-stamp-standard { display:inline-block; padding:5px 8px; border-radius:4px; background:#e0ebe4; color:var(--healthy); font:700 11px \"IBM Plex Sans\",sans-serif; letter-spacing:.03em; text-transform:uppercase; white-space:nowrap; }"
+    },
+    {
+      "name": "Failure State Stamp",
+      "kind": "chip",
+      "refersTo": "stamp-failure",
+      "description": "Marks a measured failure or unavailable integration with text.",
+      "html": "<span class=\"ds-stamp-failure\">Falhou</span>",
+      "css": ".ds-stamp-failure { display:inline-block; padding:5px 8px; border-radius:4px; background:#f4e4dc; color:var(--attention); font:700 11px \"IBM Plex Sans\",sans-serif; letter-spacing:.03em; text-transform:uppercase; white-space:nowrap; }"
+    },
+    {
+      "name": "Repository Sheet",
+      "kind": "card",
+      "refersTo": "repository-sheet",
+      "description": "Groups the agent and CI backend controls for one repository.",
+      "html": "<section class=\"ds-repo-sheet\"><header class=\"ds-repo-head\"><strong>repo/exemplo</strong></header><div class=\"ds-backend-row\"><span><strong>Agentes</strong><small>Atual: ubuntu-latest</small></span><select aria-label=\"Backend de agentes\"><option>ubuntu-latest</option></select><button type=\"button\">Trocar</button></div><div class=\"ds-backend-row\"><span><strong>CI</strong><small>Atual: ubuntu-latest</small></span><select aria-label=\"Backend de CI\"><option>ubuntu-latest</option></select><button type=\"button\">Trocar</button></div></section>",
+      "css": ".ds-repo-sheet { padding:0 18px 4px; border:1px solid var(--rule); border-radius:10px; background:var(--raised); color:var(--ink); font-family:\"IBM Plex Sans\",sans-serif; } .ds-repo-head { padding:16px 0 11px; font-size:15px; } .ds-backend-row { display:flex; align-items:center; gap:10px; padding:13px 0; border-top:1px solid var(--rule); } .ds-backend-row > span:first-child { display:grid; gap:3px; flex:1; } .ds-backend-row strong { font-size:13px; } .ds-backend-row small,.ds-backend-muted { color:var(--muted); font-size:12px; } .ds-backend-row select { width:160px; height:40px; padding:0 11px; border:1px solid #adb7b0; border-radius:6px; background:var(--raised); color:var(--ink); font:400 16px \"IBM Plex Sans\",sans-serif; } .ds-backend-row button { min-height:36px; padding:7px 12px; border:1px solid #aab7b0; border-radius:6px; background:var(--raised); color:var(--ink); font:600 13px \"IBM Plex Sans\",sans-serif; cursor:pointer; } .ds-backend-row button:hover { background:#e7eeea; border-color:var(--action); } .ds-backend-row button:focus-visible,.ds-backend-row select:focus-visible { outline:3px solid #3a777c; outline-offset:3px; } @media (max-width:720px) { .ds-backend-row { flex-wrap:wrap; } .ds-backend-row > span:first-child { flex-basis:100%; } .ds-backend-row select { flex:1; min-width:0; } }"
+    },
+    {
+      "name": "Operation Preview",
+      "kind": "custom",
+      "refersTo": "operation-preview",
+      "description": "Shows every proposed backend change and an unknown-current-value warning before confirmation.",
+      "html": "<section class=\"ds-operation-preview\"><strong>Economia: 1 alteração</strong><ul><li><b>repo/exemplo</b> · AGENT_RUNNER: valor atual desconhecido → self-hosted</li></ul><p>GitHub não confirmou o valor atual. Confirmar tentará sobrescrever esse valor mesmo assim.</p><div class=\"ds-preview-actions\"><button class=\"ds-preview-confirm\" type=\"button\">Confirmar com valores desconhecidos</button><button class=\"ds-preview-cancel\" type=\"button\">Cancelar</button></div></section>",
+      "css": ".ds-operation-preview { display:grid; gap:12px; padding:15px; border:1px solid #a5b9b1; border-radius:8px; background:#e9f0eb; color:var(--ink); font:400 13px \"IBM Plex Sans\",sans-serif; } .ds-operation-preview > strong { font-size:14px; } .ds-operation-preview ul { margin:0; padding-left:18px; display:grid; gap:7px; overflow-wrap:anywhere; } .ds-operation-preview li b { font-weight:600; } .ds-operation-preview p { margin:0; color:var(--attention); line-height:1.5; } .ds-preview-actions { display:flex; flex-wrap:wrap; gap:8px; } .ds-preview-actions button { min-height:36px; padding:7px 12px; border-radius:6px; font:600 13px \"IBM Plex Sans\",sans-serif; cursor:pointer; } .ds-preview-confirm { border:1px solid var(--action); background:var(--action); color:#fff; } .ds-preview-confirm:hover { background:#0f383c; } .ds-preview-cancel { border:1px solid transparent; background:transparent; color:var(--ink); } .ds-preview-cancel:hover { background:#e7eeea; } .ds-preview-actions button:focus-visible { outline:3px solid #3a777c; outline-offset:3px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Field Maintenance Ledger",
+    "overview": "Operate mode. The interface feels like a field ledger carried between hosts: warm paper, dark ink, precise rules, small state stamps, and type that makes measurements easy to compare. It serves one operator checking infrastructure from a phone, often during an incident. The current condition and its time of observation lead; everything else follows in quiet, ordered rows.\n\nHosts, projects, runners, queue items, and sessions share a name, state, context, and observation rhythm. Actions reveal beside the item they affect. Desktop keeps the same dense grammar while giving it a navigation rail and wider measures. Bounded sheets appear where a repository or bulk operation needs several controls; ordinary records remain ruled rows.",
+    "keyCharacteristics": [
+      "Warm, flat surfaces with thin dividers and very little elevation.",
+      "Plain-language condition and explicit freshness before supporting metrics.",
+      "Teal for operation, green for confirmed health, rust for failures or risky unknowns.",
+      "Local IBM Plex Sans for reading and IBM Plex Mono for times, measures, and code.",
+      "Inline previews that show the target and proposed change before submission."
+    ],
+    "rules": [
+      {
+        "name": "The State Has Words Rule",
+        "body": "Every dot, tint, and stamp is paired with a readable state or warning; color never carries the diagnosis alone.",
+        "section": "colors"
+      },
+      {
+        "name": "The Measurement Type Rule",
+        "body": "Put IBM Plex Mono on data that benefits from alignment or exact reading; leave explanations in IBM Plex Sans.",
+        "section": "typography"
+      },
+      {
+        "name": "The Incident First Rule",
+        "body": "Show the condition and its last observation before metrics or controls. A failed subject, its context, and its age stay together in the incident list.",
+        "section": "layout"
+      },
+      {
+        "name": "The Ruled Surface Rule",
+        "body": "Use borders and tonal changes to organize in-flow content; reserve shadows for a surface that actually floats.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do lead the phone overview with condition and observation time, then show incidents before healthy measurements.",
+      "Do give unknown, missing, and stale readings their own text; a dash means unavailable data, not zero.",
+      "Do keep actions and results adjacent to the project or repository they affect.",
+      "Do preview repository, variable, current value, and proposed value before a backend change.",
+      "Do keep rule-separated rows as the default presentation for infrastructure records."
+    ],
+    "donts": [
+      "Don't turn ordinary host, project, runner, or session records into a wall of summary cards.",
+      "Don't let a color dot or wash stand in for a written state or reason.",
+      "Don't treat a GitHub value that was not read as a known default in a confirmation preview.",
+      "Don't use IBM Plex Mono for explanatory paragraphs or uppercase labels for long copy."
+    ]
+  }
+}

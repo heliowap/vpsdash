@@ -1,0 +1,1 @@
+{"Self":{"HostName":"sample-vps","OS":"linux","Online":true,"DNSName":"sample-vps.example.invalid."},"Peer":{"peer-a":{"HostName":"sample-app","OS":"linux","Online":true,"DNSName":"sample-app.example.invalid."},"peer-b":{"HostName":"sample-client","OS":"windows","Online":false,"DNSName":"sample-client.example.invalid."}}}

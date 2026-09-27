@@ -1,0 +1,19 @@
+[Unit]
+Description=vpsdash private operations dashboard
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+# A failed condition skips startup without Restart=on-failure retrying invalid config.
+ExecCondition=%h/bin/vpsdash check-config --config %h/.config/vpsdash/config.json
+ExecStart=%h/bin/vpsdash --config %h/.config/vpsdash/config.json
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+# Filesystem namespaces (ProtectSystem/ReadWritePaths) require PrivateUsers in
+# user units and block the Tailscale socket in this deployment.
+Environment=PATH=/home/vpsdash/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

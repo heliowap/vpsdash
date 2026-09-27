@@ -1,0 +1,14 @@
+{
+  "name": "vpsdash",
+  "short_name": "vpsdash",
+  "description": "Saúde e operação da infraestrutura na tailnet.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f3ee",
+  "theme_color": "#f5f3ee",
+  "icons": [
+    { "src": "/icons/vpsdash-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/vpsdash-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
