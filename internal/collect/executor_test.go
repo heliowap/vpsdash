@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -31,6 +32,9 @@ func TestExecutorKeepsConcurrentSSHOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
+	slowStarted := make(chan struct{})
+	slowRelease := make(chan struct{})
+	defer close(slowRelease)
 	go func() {
 		connection, err := listener.Accept()
 		if err != nil {
@@ -56,6 +60,12 @@ func TestExecutorKeepsConcurrentSSHOutput(t *testing.T) {
 						continue
 					}
 					request.Reply(true, nil)
+					var execRequest struct{ Command string }
+					if err := ssh.Unmarshal(request.Payload, &execRequest); err == nil && execRequest.Command == "hold" {
+						close(slowStarted)
+						<-slowRelease
+						return
+					}
 					var writes sync.WaitGroup
 					writes.Add(2)
 					go func() {
@@ -94,5 +104,23 @@ func TestExecutorKeepsConcurrentSSHOutput(t *testing.T) {
 	}
 	if strings.Count(output, "stdout\n") != 128 || strings.Count(output, "stderr\n") != 128 {
 		t.Fatalf("SSH output was truncated: %d stdout lines, %d stderr lines", strings.Count(output, "stdout\n"), strings.Count(output, "stderr\n"))
+	}
+	slowCtx, stopSlow := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer stopSlow()
+	slowResult := make(chan error, 1)
+	go func() {
+		_, err := executor.runRemote(slowCtx, config.Host{ID: "test"}, "hold", "")
+		slowResult <- err
+	}()
+	select {
+	case <-slowStarted:
+	case <-time.After(time.Second):
+		t.Fatal("slow SSH session did not start")
+	}
+	if err := <-slowResult; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("slow SSH session = %v", err)
+	}
+	if _, err := executor.runRemote(ctx, config.Host{ID: "test"}, "sh -s", "echo after-timeout\n"); err != nil {
+		t.Fatalf("another SSH session lost its pooled client after a caller timeout: %v", err)
 	}
 }

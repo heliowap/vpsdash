@@ -251,6 +251,8 @@ local_host_id = status["Self"]["DNSName"].split(".")[0]
 dns = {device.get("DNSName", "").split(".")[0]: device.get("DNSName", "").rstrip(".")
        for device in devices if device.get("DNSName")}
 if not any(host["id"] == local_host_id for host in config["hosts"]):
+    # vpsdash cannot read helio's sessions directly; the local collector uses
+    # the same restricted SSH bridge verified earlier in this stage.
     config["hosts"].append({
         "id": local_host_id,
         "tailnet_name": status["Self"]["DNSName"].rstrip("."),
@@ -270,6 +272,9 @@ for host in config["hosts"]:
             host.pop("ssh_user", None)
             # Keep the planned key path so another wizard run can offer SSH setup.
 config["tailscale_serve_host"] = status["Self"]["DNSName"].rstrip(".")
+# The public Caddy route must overwrite X-Real-IP and X-Forwarded-For (README).
+# Serve supplies its own X-Forwarded-For, which the login handler reads first.
+config.setdefault("trust_proxy_header", True)
 owner = pwd.getpwnam("vpsdash")
 with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as output:
     json.dump(config, output, indent=2)

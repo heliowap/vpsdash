@@ -21,6 +21,16 @@ import (
 
 type fakeGitHub struct{ updates []string }
 
+type countingFileSystem struct {
+	base  http.FileSystem
+	opens int
+}
+
+func (f *countingFileSystem) Open(name string) (http.File, error) {
+	f.opens++
+	return f.base.Open(name)
+}
+
 func (f *fakeGitHub) Variable(context.Context, string, string) (string, error) { return "", nil }
 func (f *fakeGitHub) SetVariable(_ context.Context, repo, name, value string) error {
 	f.updates = append(f.updates, repo+":"+name+"="+value)
@@ -175,35 +185,39 @@ func TestLoginRateLimitSeparatesTailscaleServeClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(config.Config{TailscaleServeHost: "sample-vps.example.invalid"}, nil, nil, nil, a).Handler()
-	request := func(clientIP, spoofedRealIP, host string) int {
-		r := httptest.NewRequest("POST", "https://sample-vps.example.invalid:8443/api/login", strings.NewReader(`{"password":"wrong"}`))
-		r.Host = host
-		r.RemoteAddr = "127.0.0.1:12345"
-		r.Header.Set("X-Forwarded-For", clientIP)
-		r.Header.Set("X-Real-IP", spoofedRealIP)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		return w.Code
-	}
-	for i := 0; i < 5; i++ {
-		host := "sample-vps.example.invalid:8443"
-		if i%2 == 1 {
-			host = "app.example.com"
-		}
-		forwarded := "100.101.102.103"
-		if i%2 == 1 {
-			forwarded = "198.51.100.8, 100.101.102.103"
-		}
-		if got := request(forwarded, "203.0.113."+strconv.Itoa(i+1), host); got != http.StatusUnauthorized {
-			t.Fatalf("tailnet attempt %d = %d", i+1, got)
-		}
-	}
-	if got := request("198.51.100.8, 100.101.102.103", "203.0.113.60", "app.example.com"); got != http.StatusTooManyRequests {
-		t.Fatalf("rate-limited tailnet client = %d", got)
-	}
-	if got := request("100.101.102.104", "203.0.113.60", "app.example.com"); got != http.StatusUnauthorized {
-		t.Fatalf("other tailnet client = %d", got)
+	for _, trustPublicProxy := range []bool{false, true} {
+		t.Run(strconv.FormatBool(trustPublicProxy), func(t *testing.T) {
+			h := New(config.Config{TrustProxyHeader: trustPublicProxy, TailscaleServeHost: "sample-vps.example.invalid"}, nil, nil, nil, a).Handler()
+			request := func(clientIP, spoofedRealIP, host string) int {
+				r := httptest.NewRequest("POST", "https://sample-vps.example.invalid:8443/api/login", strings.NewReader(`{"password":"wrong"}`))
+				r.Host = host
+				r.RemoteAddr = "127.0.0.1:12345"
+				r.Header.Set("X-Forwarded-For", clientIP)
+				r.Header.Set("X-Real-IP", spoofedRealIP)
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, r)
+				return w.Code
+			}
+			for i := 0; i < 5; i++ {
+				host := "sample-vps.example.invalid:8443"
+				if i%2 == 1 {
+					host = "app.example.com"
+				}
+				forwarded := "100.101.102.103"
+				if i%2 == 1 {
+					forwarded = "198.51.100.8, 100.101.102.103"
+				}
+				if got := request(forwarded, "203.0.113."+strconv.Itoa(i+1), host); got != http.StatusUnauthorized {
+					t.Fatalf("tailnet attempt %d = %d", i+1, got)
+				}
+			}
+			if got := request("198.51.100.8, 100.101.102.103", "203.0.113.60", "app.example.com"); got != http.StatusTooManyRequests {
+				t.Fatalf("rate-limited tailnet client = %d", got)
+			}
+			if got := request("100.101.102.104", "203.0.113.60", "app.example.com"); got != http.StatusUnauthorized {
+				t.Fatalf("other tailnet client = %d", got)
+			}
+		})
 	}
 }
 
@@ -228,6 +242,37 @@ func TestLoginClientIPKeepsProxyRoutesSeparate(t *testing.T) {
 		if got := s.loginClientIP(r); got != tc.want {
 			t.Errorf("%s from %s = %q, want %q", tc.host, tc.remote, got, tc.want)
 		}
+	}
+}
+
+func TestPublicProxyLoginLimitsEachClientSeparately(t *testing.T) {
+	a, err := auth.New("$argon2id$test", []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(config.Config{TrustProxyHeader: true, TailscaleServeHost: "sample-vps.example.invalid"}, nil, nil, nil, a)
+	s.verifyPassword = func(string) bool { return false }
+	h := s.Handler()
+	request := func(realIP string) int {
+		r := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password":"wrong"}`))
+		r.Host = "app.example.com"
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("X-Real-IP", realIP)
+		r.Header.Set("X-Forwarded-For", "100.101.102.103, "+realIP)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := 0; i < 5; i++ {
+		if got := request("198.51.100.8"); got != http.StatusUnauthorized {
+			t.Fatalf("first client attempt %d = %d", i+1, got)
+		}
+	}
+	if got := request("198.51.100.8"); got != http.StatusTooManyRequests {
+		t.Fatalf("first client was not limited: %d", got)
+	}
+	if got := request("198.51.100.9"); got != http.StatusUnauthorized {
+		t.Fatalf("second client shared first client's limit: %d", got)
 	}
 }
 
@@ -451,6 +496,28 @@ func TestEmbeddedPWAAssets(t *testing.T) {
 	h.ServeHTTP(w, revalidated)
 	if w.Code != http.StatusNotModified {
 		t.Fatalf("icon revalidation = %d", w.Code)
+	}
+}
+
+func TestStaticRevalidationUsesCachedAsset(t *testing.T) {
+	files := &countingFileSystem{base: http.FS(web.Dist())}
+	h := (&Server{Static: files}).Handler()
+	assets, err := fs.Glob(web.Dist(), "assets/*.js")
+	if err != nil || len(assets) == 0 {
+		t.Fatalf("embedded JS assets = %v, %v", assets, err)
+	}
+	path := "/" + assets[0]
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, httptest.NewRequest(http.MethodGet, path, nil))
+	if first.Code != http.StatusOK || first.Header().Get("ETag") == "" {
+		t.Fatalf("initial asset = %d, ETag %q", first.Code, first.Header().Get("ETag"))
+	}
+	revalidation := httptest.NewRequest(http.MethodGet, path, nil)
+	revalidation.Header.Set("If-None-Match", first.Header().Get("ETag"))
+	second := httptest.NewRecorder()
+	h.ServeHTTP(second, revalidation)
+	if second.Code != http.StatusNotModified || files.opens != 1 {
+		t.Fatalf("cached revalidation = %d, file opens = %d", second.Code, files.opens)
 	}
 }
 

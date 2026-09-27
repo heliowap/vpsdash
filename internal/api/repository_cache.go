@@ -4,12 +4,14 @@ import (
 	"context"
 	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
 type repoVariableCache struct {
 	agent, ci           string
 	agentKnown, ciKnown bool
+	agentError, ciError string
 	problem             string
 	updated             time.Time
 	refreshing          bool
@@ -18,9 +20,9 @@ type repoVariableCache struct {
 
 // repositoryVariables never waits for GitHub on the dashboard request path.
 // One bounded refresh per repository updates the snapshot in the background.
-func (s *Server) repositoryVariables(repo string) (agent, ci string, agentKnown, ciKnown bool, problem string) {
+func (s *Server) repositoryVariables(repo string) (agent, ci string, agentKnown, ciKnown bool, agentError, ciError, problem string) {
 	if s.GitHub == nil {
-		return "", "", false, false, "GitHub App não provisionado"
+		return "", "", false, false, "GitHub App não provisionado", "GitHub App não provisionado", "GitHub App não provisionado"
 	}
 	s.repoMu.Lock()
 	if s.repoCache == nil {
@@ -35,7 +37,8 @@ func (s *Server) repositoryVariables(repo string) (agent, ci string, agentKnown,
 		state.refreshing = true
 		go s.refreshRepositoryVariables(repo, state.version)
 	}
-	agent, ci, agentKnown, ciKnown, problem = state.agent, state.ci, state.agentKnown, state.ciKnown, state.problem
+	agent, ci, agentKnown, ciKnown = state.agent, state.ci, state.agentKnown, state.ciKnown
+	agentError, ciError, problem = state.agentError, state.ciError, state.problem
 	if state.updated.IsZero() || (state.problem == "" && (!state.agentKnown || !state.ciKnown)) {
 		problem = "GitHub em coleta"
 	}
@@ -46,27 +49,50 @@ func (s *Server) repositoryVariables(repo string) (agent, ci string, agentKnown,
 func (s *Server) refreshRepositoryVariables(repo string, version uint64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	agent, err := s.GitHub.Variable(ctx, repo, "AGENT_RUNNER")
-	ci := ""
-	if err == nil {
-		ci, err = s.GitHub.Variable(ctx, repo, "CI_RUNNER")
+	var agent, ci string
+	var agentErr, ciErr error
+	var reads sync.WaitGroup
+	reads.Add(2)
+	go func() {
+		defer reads.Done()
+		agent, agentErr = s.GitHub.Variable(ctx, repo, "AGENT_RUNNER")
+	}()
+	go func() {
+		defer reads.Done()
+		ci, ciErr = s.GitHub.Variable(ctx, repo, "CI_RUNNER")
+	}()
+	reads.Wait()
+	if agentErr != nil {
+		log.Printf("repository variable %s AGENT_RUNNER: %v", repo, agentErr)
 	}
-	if err != nil {
-		log.Printf("repository variables %s: %v", repo, err)
+	if ciErr != nil {
+		log.Printf("repository variable %s CI_RUNNER: %v", repo, ciErr)
 	}
 	s.repoMu.Lock()
 	defer s.repoMu.Unlock()
 	state := s.repoCache[repo]
 	if state.version == version {
-		if err == nil {
-			state.agent, state.ci, state.problem = agent, ci, ""
-			state.agentKnown, state.ciKnown = true, true
+		if agentErr == nil {
+			state.agent, state.agentKnown, state.agentError = agent, true, ""
 		} else {
-			state.problem = compactRepositoryProblem(err)
+			state.agentError = compactRepositoryProblem(agentErr)
 		}
+		if ciErr == nil {
+			state.ci, state.ciKnown, state.ciError = ci, true, ""
+		} else {
+			state.ciError = compactRepositoryProblem(ciErr)
+		}
+		state.problem = firstRepositoryProblem(state.agentError, state.ciError)
 		state.updated = time.Now()
 	}
 	state.refreshing = false
+}
+
+func firstRepositoryProblem(agentError, ciError string) string {
+	if agentError != "" {
+		return agentError
+	}
+	return ciError
 }
 
 func compactRepositoryProblem(err error) string {
@@ -97,10 +123,12 @@ func (s *Server) noteVariableSet(repo, variable, value string) {
 	if variable == "AGENT_RUNNER" {
 		state.agent = value
 		state.agentKnown = true
+		state.agentError = ""
 	} else {
 		state.ci = value
 		state.ciKnown = true
+		state.ciError = ""
 	}
-	state.problem = ""
+	state.problem = firstRepositoryProblem(state.agentError, state.ciError)
 	state.updated = time.Now()
 }

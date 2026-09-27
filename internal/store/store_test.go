@@ -191,6 +191,28 @@ func TestFirstCPUSampleRemainsUnknown(t *testing.T) {
 	}
 }
 
+func TestMetricHistoryDoesNotWaitForDashboardConnection(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertHost(ctx, Host{ID: "vps", TailnetName: "vps.example.invalid", Kind: "vps"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMetric(ctx, "vps", Metric{Memory: 50, Disk: 30, Uptime: 100}, time.Unix(300, 0)); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := s.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	points, err := s.MetricHistory(readCtx, "vps", 0, 400)
+	if err != nil || len(points) != 1 {
+		t.Fatalf("history blocked by dashboard connection: %+v, %v", points, err)
+	}
+}
+
 func TestMetricHistoryBoundsThirtyDaysToDisplaySize(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

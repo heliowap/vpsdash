@@ -150,7 +150,11 @@ func (c *Collector) pollHost(ctx context.Context, h config.Host, now time.Time, 
 	if now.Before(state.circuit.openUntil) {
 		return
 	}
-	lock := c.hostLocks[h.ID]
+	lock, ok := c.hostLocks[h.ID]
+	if !ok {
+		c.setError("host:"+h.ID, fmt.Errorf("host lock missing for %s", h.ID))
+		return
+	}
 	lock.Lock()
 	defer lock.Unlock()
 	var commandErr error

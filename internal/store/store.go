@@ -13,7 +13,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db      *sql.DB
+	history *sql.DB
+}
 
 type Host struct {
 	ID          string  `json:"id"`
@@ -69,10 +72,23 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	history, err := sql.Open("sqlite", path)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	history.SetMaxOpenConns(1)
+	for _, pragma := range []string{"PRAGMA query_only=ON", "PRAGMA busy_timeout=5000"} {
+		if _, err := history.Exec(pragma); err != nil {
+			_ = history.Close()
+			_ = db.Close()
+			return nil, err
+		}
+	}
+	return &Store{db: db, history: history}, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error { return errors.Join(s.history.Close(), s.db.Close()) }
 
 var migrations = []string{
 	`CREATE TABLE hosts (
@@ -199,7 +215,7 @@ func (s *Store) MetricHistory(ctx context.Context, hostID string, since, until i
 	if step < 60 {
 		step = 60
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT MAX(ts),AVG(cpu_pct),COALESCE(AVG(mem_pct),0),COALESCE(AVG(disk_pct),0),COALESCE(MAX(uptime_s),0)
+	rows, err := s.history.QueryContext(ctx, `SELECT MAX(ts),AVG(cpu_pct),COALESCE(AVG(mem_pct),0),COALESCE(AVG(disk_pct),0),COALESCE(MAX(uptime_s),0)
 FROM metrics WHERE host_id=? AND ts>=? AND ts<? GROUP BY (ts-?)/? ORDER BY MAX(ts)`, hostID, since, until, since, step)
 	if err != nil {
 		return nil, err

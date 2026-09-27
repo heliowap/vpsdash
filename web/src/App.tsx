@@ -238,7 +238,8 @@ function RepoSwitch({ repo, variable, csrf, onRefresh }: { repo: Repository; var
   const current = variable === 'AGENT_RUNNER' ? repo.agent_runner : repo.ci_runner
   const currentKnown = variable === 'AGENT_RUNNER' ? repo.agent_known : repo.ci_known
   const enabled = variable === 'AGENT_RUNNER' ? repo.agent_switchable : repo.ci_switchable
-  const operable = enabled && currentKnown && (!repo.error || repo.error === 'GitHub em coleta')
+  const variableError = variable === 'AGENT_RUNNER' ? repo.agent_error : repo.ci_error
+  const operable = enabled && currentKnown && !variableError
   const [choice, setChoice] = useState(current || 'self-hosted')
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -250,7 +251,7 @@ function RepoSwitch({ repo, variable, csrf, onRefresh }: { repo: Repository; var
     catch (err) { setFeedback({ kind: 'error', message: err instanceof Error ? err.message : 'Não foi possível trocar.' }) }
     finally { setBusy(false) }
   }
-  return <div className="backend-row"><div><strong>{variable === 'AGENT_RUNNER' ? 'Agentes' : 'CI'}</strong><small>{!enabled ? 'Workflow sem switch confirmado' : currentKnown ? `${repo.error && repo.error !== 'GitHub em coleta' ? 'Último valor confirmado' : 'Atual'}: ${current || 'padrão do workflow'}` : repo.error === 'GitHub em coleta' ? 'Consultando valor atual no GitHub…' : 'Valor atual desconhecido — GitHub indisponível'}</small></div>
+  return <div className="backend-row"><div><strong>{variable === 'AGENT_RUNNER' ? 'Agentes' : 'CI'}</strong><small>{!enabled ? 'Workflow sem switch confirmado' : currentKnown ? `${variableError ? 'Último valor confirmado' : 'Atual'}: ${current || 'padrão do workflow'}` : repo.error === 'GitHub em coleta' ? 'Consultando valor atual no GitHub…' : 'Valor atual desconhecido — GitHub indisponível'}</small></div>
     {operable ? <div className="backend-control"><select aria-label={`Backend de ${variable} em ${repo.name}`} value={choice} onChange={event => { setChoice(event.target.value); setConfirm(false) }}>{labels.map(label => <option key={label} value={label}>{label}</option>)}</select><button className="button button-small" type="button" disabled={choice === current || busy} onClick={() => setConfirm(true)}>Trocar</button></div> : enabled ? <span className="muted-text">{repo.error === 'GitHub em coleta' ? 'Em coleta' : 'Integração indisponível'}</span> : <a className="button button-small" href={`https://github.com/${repo.name}/pulls`} target="_blank" rel="noreferrer" aria-label={`Abrir PRs de ${repo.name} para solicitar adoção de ${variable}`}>Abrir PRs para pedir /oc</a>}
     {confirm && <div className="inline-confirm"><span>Trocar {repo.name} de <b>{current || 'padrão'}</b> para <b>{choice}</b>?</span><div><button type="button" className="button button-small button-primary" disabled={busy} onClick={apply}>{busy ? 'Aplicando…' : 'Confirmar'}</button><button type="button" className="button button-small button-plain" onClick={() => setConfirm(false)}>Cancelar</button></div></div>}
     {feedback && <p className={`inline-feedback ${feedback.kind === 'error' ? 'is-error' : ''}`} role={feedback.kind === 'error' ? 'alert' : 'status'}>{feedback.message}</p>}
@@ -278,16 +279,16 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
   const [bulkPending, setBulkPending] = useState(false)
   const [feedback, setFeedback] = useState<Notice>(null)
   const [busy, setBusy] = useState(false)
-  const selectable = data.repositories.filter(repo => (!repo.error || repo.error === 'GitHub em coleta') && (bulkVariable === 'AGENT_RUNNER' ? repo.agent_switchable && repo.agent_known : repo.ci_switchable && repo.ci_known))
-  const hasOperations = data.repositories.some(repo => (!repo.error || repo.error === 'GitHub em coleta') && (repo.agent_switchable && repo.agent_known || repo.ci_switchable && repo.ci_known))
+  const selectable = data.repositories.filter(repo => bulkVariable === 'AGENT_RUNNER' ? repo.agent_switchable && repo.agent_known && !repo.agent_error : repo.ci_switchable && repo.ci_known && !repo.ci_error)
+  const hasOperations = data.repositories.some(repo => repo.agent_switchable && repo.agent_known && !repo.agent_error || repo.ci_switchable && repo.ci_known && !repo.ci_error)
   const fleetObserved = data.fleet_seen_at > 0
   const fleetErrors = Object.keys(data.collector_errors).some(scope => scope.startsWith('github:'))
   const fleetStale = fleetObserved && Date.now() / 1000 - data.fleet_seen_at > 120
   const fleetUncertain = refreshFailed || fleetErrors || fleetStale
   const bulkTargets: SwitchTarget[] = selectable.filter(repo => selected.includes(repo.name)).map(repo => ({ repo: repo.name, variable: bulkVariable, current: bulkVariable === 'AGENT_RUNNER' ? repo.agent_runner : repo.ci_runner, currentKnown: true }))
   const presetTargets: SwitchTarget[] = data.repositories.flatMap(repo => ([
-    ...(repo.agent_switchable ? [{ repo: repo.name, variable: 'AGENT_RUNNER' as const, current: repo.agent_runner, currentKnown: repo.agent_known && (!repo.error || repo.error === 'GitHub em coleta') }] : []),
-    ...(repo.ci_switchable ? [{ repo: repo.name, variable: 'CI_RUNNER' as const, current: repo.ci_runner, currentKnown: repo.ci_known && (!repo.error || repo.error === 'GitHub em coleta') }] : [])
+    ...(repo.agent_switchable ? [{ repo: repo.name, variable: 'AGENT_RUNNER' as const, current: repo.agent_runner, currentKnown: repo.agent_known && !repo.agent_error }] : []),
+    ...(repo.ci_switchable ? [{ repo: repo.name, variable: 'CI_RUNNER' as const, current: repo.ci_runner, currentKnown: repo.ci_known && !repo.ci_error }] : [])
   ]))
   const unknownPresetTargets = presetTargets.filter(target => !target.currentKnown).length
   const pendingPreset = presets.find(preset => preset.id === presetPending)

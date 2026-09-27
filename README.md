@@ -63,6 +63,9 @@ de executá-lo para uma frota diferente da configuração de exemplo.
 Se o host local ainda não estiver no inventário, o assistente o inclui como
 VPS após verificar a coleta SSH local. Antes de iniciar a unit, ele valida o
 inventário e mostra o caminho do arquivo caso haja um erro.
+Mesmo no host local, a coleta passa pela ponte SSH restrita da conta `helio`;
+executar o coletor como `vpsdash` com `local: true` impediria a leitura das
+sessões e serviços isolados nessa conta.
 No exemplo, as VPSs remotas começam como presença Tailscale e só passam a
 `vps` após a chave SSH ser verificada. O caminho de chave no inventário
 preserva essa intenção para uma nova execução do assistente.
@@ -215,6 +218,7 @@ app.example.com {
     encode gzip zstd
     header Strict-Transport-Security "max-age=31536000"
     reverse_proxy 127.0.0.1:8484 {
+        # Necessário para trust_proxy_header=true no inventário do exemplo.
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-For {remote_host}
     }
@@ -222,12 +226,12 @@ app.example.com {
 ```
 
 O proxy deve sobrescrever `X-Real-IP` e `X-Forwarded-For` com o IP da conexão
-recebida; não encaminhe um valor fornecido pelo navegador. O painel mantém
-`trust_proxy_header` desativado por padrão. Para limitar separadamente os
-clientes do domínio público, defina `"trust_proxy_header": true` na
-configuração privada somente após conferir que o proxy sobrescreve esses
-cabeçalhos. A rota do Tailscale Serve não exige essa opção. Com
-`tailscale_serve_host` configurado, o serviço identifica primeiro o IP da
+recebida; não encaminhe um valor fornecido pelo navegador. O inventário de
+exemplo habilita `"trust_proxy_header": true` para que o login público tenha
+limites por cliente. O assistente preserva uma escolha explícita diferente;
+mantenha a opção ativa somente com um proxy público que sobrescreva ambos os
+cabeçalhos. A rota do Tailscale Serve funciona com a opção ligada ou desligada.
+Com `tailscale_serve_host` configurado, o serviço identifica primeiro o IP da
 tailnet em `X-Forwarded-For`, que o Tailscale Serve sobrescreve. Ele usa esse
 IP mesmo se um cliente alterar `Host` e enviar um `X-Real-IP` falso.
 Assim, as duas rotas compartilham a porta local e mantêm limites por cliente.
@@ -247,10 +251,18 @@ pode coexistir com a pública; não use Tailscale Funnel para expor outra rota.
 
 ## GitHub App `gh-agents-ops`
 
-`app-manifest.json` pede `actions:read`, `administration:write`,
-`actions_variables:write`, `organization_self_hosted_runners:write` e
-`organization_actions_variables:write`. Não pede `contents` nem `issues`.
+`app-manifest.json` pede `actions:read`, `administration:write` e
+`actions_variables:write`. Não pede permissões de escrita na organização,
+`contents` nem `issues`.
 Metadata é implícita. Sem webhook ativo.
+
+Se o App `gh-agents-ops` já foi registrado com uma versão anterior do
+manifesto, remova `organization_self_hosted_runners` e
+`organization_actions_variables` em **Settings → Developer settings → GitHub
+Apps → gh-agents-ops → Permissions & events → Organization permissions**,
+selecionando **No access** para ambas. [O GitHub aplica a remoção
+imediatamente](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration).
+Alterar o manifesto local não reduz as permissões de um App já registrado.
 
 O fluxo de manifesto do GitHub exige uma confirmação no navegador. Em uma
 máquina com navegador e este checkout:

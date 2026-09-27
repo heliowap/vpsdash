@@ -101,7 +101,6 @@ func (e *Executor) runRemote(ctx context.Context, host config.Host, command, inp
 		return string(result.output), nil
 	case <-ctx.Done():
 		_ = session.Close()
-		e.invalidate(host.ID)
 		return "", ctx.Err()
 	}
 }

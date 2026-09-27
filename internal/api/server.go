@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/netip"
@@ -46,6 +47,13 @@ type Server struct {
 	verifyPassword  func(string) bool
 	repoMu          sync.Mutex
 	repoCache       map[string]*repoVariableCache
+	staticMu        sync.RWMutex
+	staticCache     map[string]staticAsset
+}
+
+type staticAsset struct {
+	data []byte
+	etag string
 }
 
 type loginAttempts struct {
@@ -307,6 +315,8 @@ type repoView struct {
 	CIRunner        string `json:"ci_runner"`
 	AgentKnown      bool   `json:"agent_known"`
 	CIKnown         bool   `json:"ci_known"`
+	AgentError      string `json:"agent_error,omitempty"`
+	CIError         string `json:"ci_error,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
 
@@ -342,7 +352,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	repos := make([]repoView, 0, len(s.Config.Repositories))
 	for _, cfg := range s.Config.Repositories {
 		view := repoView{Name: cfg.Name, AgentSwitchable: cfg.AgentSwitchable, CISwitchable: cfg.CISwitchable}
-		view.AgentRunner, view.CIRunner, view.AgentKnown, view.CIKnown, view.Error = s.repositoryVariables(cfg.Name)
+		view.AgentRunner, view.CIRunner, view.AgentKnown, view.CIKnown, view.AgentError, view.CIError, view.Error = s.repositoryVariables(cfg.Name)
 		repos = append(repos, view)
 	}
 	fleetSeenAt := int64(0)
@@ -540,29 +550,22 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "index.html"
 	}
-	f, err := s.Static.Open(path)
+	asset, err := s.loadStatic(path)
 	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrInvalid) {
+			errorResponse(w, 500, "Arquivo indisponível.")
+			return
+		}
 		if !strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(path, ".") || strings.HasPrefix(path, "assets/") || strings.HasPrefix(path, "icons/") {
 			http.NotFound(w, r)
 			return
 		}
-		f, err = s.Static.Open("index.html")
+		asset, err = s.loadStatic("index.html")
 		if err != nil {
-			http.NotFound(w, r)
+			errorResponse(w, 500, "Arquivo indisponível.")
 			return
 		}
 		path = "index.html"
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || info.IsDir() {
-		http.NotFound(w, r)
-		return
-	}
-	data, err := io.ReadAll(f)
-	if err != nil {
-		errorResponse(w, 500, "Arquivo indisponível.")
-		return
 	}
 	if strings.HasSuffix(path, ".js") {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -592,6 +595,43 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	} else if strings.HasPrefix(path, "icons/") {
 		w.Header().Set("Cache-Control", "public, max-age=3600")
 	}
-	w.Header().Set("ETag", fmt.Sprintf("\"%x\"", sha256.Sum256(data)))
-	http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(data))
+	w.Header().Set("ETag", asset.etag)
+	http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(asset.data))
+}
+
+func (s *Server) loadStatic(path string) (staticAsset, error) {
+	s.staticMu.RLock()
+	asset, ok := s.staticCache[path]
+	s.staticMu.RUnlock()
+	if ok {
+		return asset, nil
+	}
+	f, err := s.Static.Open(path)
+	if err != nil {
+		return staticAsset{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return staticAsset{}, err
+	}
+	if info.IsDir() {
+		return staticAsset{}, fs.ErrNotExist
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return staticAsset{}, err
+	}
+	asset = staticAsset{data: data, etag: fmt.Sprintf("\"%x\"", sha256.Sum256(data))}
+	s.staticMu.Lock()
+	if s.staticCache == nil {
+		s.staticCache = map[string]staticAsset{}
+	}
+	if existing, found := s.staticCache[path]; found {
+		asset = existing
+	} else {
+		s.staticCache[path] = asset
+	}
+	s.staticMu.Unlock()
+	return asset, nil
 }

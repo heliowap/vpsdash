@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,15 @@ type fleetProbe struct {
 }
 
 type hostProbe struct{ calls map[string]int }
+
+func TestPollHostReportsMissingLock(t *testing.T) {
+	c := &Collector{hostLocks: map[string]*sync.Mutex{}, errors: map[string]string{}}
+	c.pollHost(context.Background(), config.Host{ID: "missing"}, time.Now(), &hostPollState{})
+	_, problems, _ := c.Snapshot()
+	if problems["host:missing"] == "" {
+		t.Fatal("missing host lock was not reported")
+	}
+}
 
 func (p *hostProbe) Run(_ context.Context, _ config.Host, script string) (string, error) {
 	p.calls[script]++

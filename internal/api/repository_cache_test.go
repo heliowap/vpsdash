@@ -32,7 +32,7 @@ func TestRepositoryVariableErrorExplainsMissingInstallation(t *testing.T) {
 	s.repositoryVariables("heliowap/vpsdash")
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		_, _, _, _, problem := s.repositoryVariables("heliowap/vpsdash")
+		_, _, _, _, _, _, problem := s.repositoryVariables("heliowap/vpsdash")
 		if problem == "GitHub App is not installed for heliowap" {
 			return
 		}
@@ -53,7 +53,7 @@ func TestColdSwitchKeepsConfirmedVariableVisible(t *testing.T) {
 	gh := &slowVariableAPI{ready: make(chan struct{}), release: make(chan struct{})}
 	s := &Server{GitHub: gh}
 	s.noteVariableSet("heliowap/vpsdash", "AGENT_RUNNER", "depot-ubuntu-24.04-4")
-	agent, ci, agentKnown, ciKnown, problem := s.repositoryVariables("heliowap/vpsdash")
+	agent, ci, agentKnown, ciKnown, _, _, problem := s.repositoryVariables("heliowap/vpsdash")
 	if agent != "depot-ubuntu-24.04-4" || ci != "" || !agentKnown || ciKnown || problem != "GitHub em coleta" {
 		t.Fatalf("cold switch snapshot = %q, %q, %t, %t, %q", agent, ci, agentKnown, ciKnown, problem)
 	}
@@ -117,13 +117,13 @@ func TestDashboardDoesNotWaitForGitHubVariables(t *testing.T) {
 	close(gh.release)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		agent, ci, _, _, problem := s.repositoryVariables("heliowap/vpsdash")
+		agent, ci, _, _, _, _, problem := s.repositoryVariables("heliowap/vpsdash")
 		if problem == "" {
 			if agent != "ubuntu-latest" || ci != "self-hosted" {
 				t.Fatalf("cached variables = %q, %q", agent, ci)
 			}
 			s.noteVariableSet("heliowap/vpsdash", "AGENT_RUNNER", "depot-ubuntu-24.04-4")
-			agent, _, _, _, _ = s.repositoryVariables("heliowap/vpsdash")
+			agent, _, _, _, _, _, _ = s.repositoryVariables("heliowap/vpsdash")
 			if agent != "depot-ubuntu-24.04-4" {
 				t.Fatalf("successful switch was not visible: %q", agent)
 			}
@@ -132,4 +132,33 @@ func TestDashboardDoesNotWaitForGitHubVariables(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("variable cache did not refresh")
+}
+
+type partialVariableAPI struct{}
+
+func (partialVariableAPI) Variable(_ context.Context, _, name string) (string, error) {
+	if name == "CI_RUNNER" {
+		return "", errors.New("CI variable unavailable")
+	}
+	return "ubuntu-latest", nil
+}
+func (partialVariableAPI) SetVariable(context.Context, string, string, string) error { return nil }
+
+func TestRepositoryVariablesKeepIndependentSuccessfulReads(t *testing.T) {
+	s := &Server{GitHub: partialVariableAPI{}}
+	const repo = "heliowap/vpsdash"
+	s.repositoryVariables(repo)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		agent, ci, agentKnown, ciKnown, agentError, ciError, problem := s.repositoryVariables(repo)
+		if problem == "GitHub em coleta" {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if agent != "ubuntu-latest" || ci != "" || !agentKnown || ciKnown || agentError != "" || ciError != "CI variable unavailable" || problem != ciError {
+			t.Fatalf("partial snapshot = %q, %q, %t, %t, %q, %q, %q", agent, ci, agentKnown, ciKnown, agentError, ciError, problem)
+		}
+		return
+	}
+	t.Fatal("partial GitHub read was not cached")
 }

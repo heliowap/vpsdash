@@ -11,9 +11,7 @@
   "default_permissions": {
     "actions": "read",
     "administration": "write",
-    "actions_variables": "write",
-    "organization_self_hosted_runners": "write",
-    "organization_actions_variables": "write"
+    "actions_variables": "write"
   },
   "default_events": []
 }
