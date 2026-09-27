@@ -131,7 +131,9 @@ function incidents(data: Dashboard): Incident[] {
   for (const [scope] of Object.entries(data.collector_errors)) {
     const [kind, id = ''] = scope.split(':', 2)
     if (kind === 'host' && items.some(item => item.id === `host-${id}`)) continue
-    if (['metrics', 'discovery', 'sessions', 'health-sweep', 'check'].includes(kind) && data.collector_errors[`host:${kind === 'check' ? id.split('/')[0] : id}`]) continue
+    const hostID = kind === 'check' ? id.split('/')[0] : id
+    if (['metrics', 'discovery', 'sessions', 'health-sweep', 'check'].includes(kind) && data.collector_errors[`host:${hostID}`]) continue
+    if (kind === 'check' && data.collector_errors[`host-state:${hostID}`]) continue
     const incident = (() => {
       switch (kind) {
         case 'host': return { title: `Acesso SSH não confirmado: ${id}`, detail: 'Confira a conexão SSH e a tailnet.' }

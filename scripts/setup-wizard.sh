@@ -250,6 +250,14 @@ devices = [status["Self"], *status.get("Peer", {}).values()]
 local_host_id = status["Self"]["DNSName"].split(".")[0]
 dns = {device.get("DNSName", "").split(".")[0]: device.get("DNSName", "").rstrip(".")
        for device in devices if device.get("DNSName")}
+if not any(host["id"] == local_host_id for host in config["hosts"]):
+    config["hosts"].append({
+        "id": local_host_id,
+        "tailnet_name": status["Self"]["DNSName"].rstrip("."),
+        "kind": "vps",
+        "ssh_user": "helio",
+        "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_" + local_host_id,
+    })
 for host in config["hosts"]:
     name = dns.get(host["id"])
     if not name:
@@ -262,7 +270,6 @@ for host in config["hosts"]:
             host.pop("ssh_user", None)
             # Keep the planned key path so another wizard run can offer SSH setup.
 config["tailscale_serve_host"] = status["Self"]["DNSName"].rstrip(".")
-config.setdefault("trust_proxy_header", True)
 owner = pwd.getpwnam("vpsdash")
 with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as output:
     json.dump(config, output, indent=2)
@@ -562,6 +569,10 @@ fi
 pause
 
 stage "Iniciar e publicar na tailnet"
+if ! run_as_service /home/vpsdash/bin/vpsdash check-config --config "$config_file"; then
+  wizard_error "Inventário inválido em $config_file; corrija-o antes de iniciar o serviço."
+  exit 1
+fi
 user_systemctl daemon-reload
 user_systemctl enable vpsdash.service
 user_systemctl restart vpsdash.service

@@ -39,12 +39,27 @@ func main() {
 	var err error
 	if len(os.Args) > 1 && os.Args[1] == "init-auth" {
 		err = initAuth(os.Args[2:])
+	} else if len(os.Args) > 1 && os.Args[1] == "check-config" {
+		err = checkConfig(os.Args[2:])
 	} else {
 		err = serve(os.Args[1:])
 	}
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func checkConfig(args []string) error {
+	flags := flag.NewFlagSet("check-config", flag.ContinueOnError)
+	path := flags.String("config", defaultPath("config.json"), "inventory configuration")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if _, err := config.Load(*path); err != nil {
+		return fmt.Errorf("inventário %s: %w", *path, err)
+	}
+	fmt.Println("Inventário válido.")
+	return nil
 }
 
 func defaultPath(name string) string {

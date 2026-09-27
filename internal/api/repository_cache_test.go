@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,6 +39,14 @@ func TestRepositoryVariableErrorExplainsMissingInstallation(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("GitHub installation error was not surfaced")
+}
+
+func TestRepositoryProblemFitsOperatorBadge(t *testing.T) {
+	long := errors.New("GitHub API: 403 " + strings.Repeat("á", 300) + "\nprivate debug detail")
+	got := compactRepositoryProblem(long)
+	if len([]rune(got)) > 180 || strings.Contains(got, "\n") || strings.Contains(got, "private debug detail") || !strings.HasPrefix(got, "GitHub API: 403 ") {
+		t.Fatalf("unbounded badge: %q", got)
+	}
 }
 
 func TestColdSwitchKeepsConfirmedVariableVisible(t *testing.T) {

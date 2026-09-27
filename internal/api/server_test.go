@@ -175,7 +175,7 @@ func TestLoginRateLimitSeparatesTailscaleServeClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(config.Config{TrustProxyHeader: true, TailscaleServeHost: "sample-vps.example.invalid"}, nil, nil, nil, a).Handler()
+	h := New(config.Config{TailscaleServeHost: "sample-vps.example.invalid"}, nil, nil, nil, a).Handler()
 	request := func(clientIP, spoofedRealIP, host string) int {
 		r := httptest.NewRequest("POST", "https://sample-vps.example.invalid:8443/api/login", strings.NewReader(`{"password":"wrong"}`))
 		r.Host = host
@@ -191,11 +191,15 @@ func TestLoginRateLimitSeparatesTailscaleServeClients(t *testing.T) {
 		if i%2 == 1 {
 			host = "app.example.com"
 		}
-		if got := request("100.101.102.103", "203.0.113."+strconv.Itoa(i+1), host); got != http.StatusUnauthorized {
+		forwarded := "100.101.102.103"
+		if i%2 == 1 {
+			forwarded = "198.51.100.8, 100.101.102.103"
+		}
+		if got := request(forwarded, "203.0.113."+strconv.Itoa(i+1), host); got != http.StatusUnauthorized {
 			t.Fatalf("tailnet attempt %d = %d", i+1, got)
 		}
 	}
-	if got := request("100.101.102.103", "203.0.113.60", "app.example.com"); got != http.StatusTooManyRequests {
+	if got := request("198.51.100.8, 100.101.102.103", "203.0.113.60", "app.example.com"); got != http.StatusTooManyRequests {
 		t.Fatalf("rate-limited tailnet client = %d", got)
 	}
 	if got := request("100.101.102.104", "203.0.113.60", "app.example.com"); got != http.StatusUnauthorized {
@@ -209,7 +213,9 @@ func TestLoginClientIPKeepsProxyRoutesSeparate(t *testing.T) {
 		host, remote, forwarded, realIP, want string
 	}{
 		{"sample-vps.example.invalid", "127.0.0.1:1234", "fd7a:115c:a1e0::123", "203.0.113.9", "fd7a:115c:a1e0::123"},
-		{"sample-vps.example.invalid", "127.0.0.1:1234", "100.101.102.103, 100.101.102.104", "203.0.113.9", "127.0.0.1"},
+		{"sample-vps.example.invalid", "127.0.0.1:1234", "100.101.102.103, 100.101.102.104", "203.0.113.9", "100.101.102.104"},
+		{"app.example.com", "127.0.0.1:1234", "198.51.100.8, 100.101.102.103", "203.0.113.9", "100.101.102.103"},
+		{"app.example.com", "127.0.0.1:1234", "100.101.102.103, 198.51.100.8", "203.0.113.9", "203.0.113.9"},
 		{"sample-vps.example.invalid", "127.0.0.1:1234", "203.0.113.8", "203.0.113.9", "127.0.0.1"},
 		{"app.example.com", "127.0.0.1:1234", "100.101.102.103", "203.0.113.9", "100.101.102.103"},
 		{"app.example.com", "127.0.0.1:1234", "198.51.100.10", "203.0.113.9", "203.0.113.9"},
@@ -314,6 +320,21 @@ func TestLoginReservationsCountInFlightAttempts(t *testing.T) {
 	s.finishLogin("198.51.100.10", true, now)
 	if !s.reserveLogin("198.51.100.10", now) {
 		t.Fatal("successful login did not clear previous failures")
+	}
+}
+
+func TestFinishLoginReleasesGlobalReservationWithoutClientEntry(t *testing.T) {
+	s := &Server{loginAttempts: map[string]*loginAttempts{}}
+	now := time.Now()
+	if !s.reserveLogin("198.51.100.9", now) {
+		t.Fatal("login reservation failed")
+	}
+	s.loginMu.Lock()
+	delete(s.loginAttempts, "198.51.100.9")
+	s.loginMu.Unlock()
+	s.finishLogin("198.51.100.9", false, now)
+	if s.globalPending != 0 || len(s.globalFailures) != 1 {
+		t.Fatalf("orphan reservation: pending=%d failures=%d", s.globalPending, len(s.globalFailures))
 	}
 }
 

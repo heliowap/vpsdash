@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,31 @@ import (
 	"github.com/heliowap/vpsdash/internal/config"
 	"github.com/heliowap/vpsdash/internal/store"
 )
+
+func TestCheckConfigReportsInvalidServeHost(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, tc := range []struct {
+		name, serveHost string
+		valid           bool
+	}{
+		{"local host in inventory", "sample-vps.example.invalid", true},
+		{"local host missing", "missing.example.invalid", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := `{"hosts":[{"id":"sample-vps","tailnet_name":"sample-vps.example.invalid","kind":"presence"}],"tailscale_serve_host":"` + tc.serveHost + `"}`
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err := checkConfig([]string{"--config", path})
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid = %t, error = %v", tc.valid, err)
+			}
+			if err != nil && !strings.Contains(err.Error(), path) {
+				t.Fatalf("missing inventory path in error: %v", err)
+			}
+		})
+	}
+}
 
 func TestMissingGitHubAppKeepsDashboardAvailable(t *testing.T) {
 	dir := t.TempDir()

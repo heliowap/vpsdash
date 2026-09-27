@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"log"
+	"strings"
 	"time"
 )
 
@@ -49,6 +51,9 @@ func (s *Server) refreshRepositoryVariables(repo string, version uint64) {
 	if err == nil {
 		ci, err = s.GitHub.Variable(ctx, repo, "CI_RUNNER")
 	}
+	if err != nil {
+		log.Printf("repository variables %s: %v", repo, err)
+	}
 	s.repoMu.Lock()
 	defer s.repoMu.Unlock()
 	state := s.repoCache[repo]
@@ -57,11 +62,24 @@ func (s *Server) refreshRepositoryVariables(repo string, version uint64) {
 			state.agent, state.ci, state.problem = agent, ci, ""
 			state.agentKnown, state.ciKnown = true, true
 		} else {
-			state.problem = err.Error()
+			state.problem = compactRepositoryProblem(err)
 		}
 		state.updated = time.Now()
 	}
 	state.refreshing = false
+}
+
+func compactRepositoryProblem(err error) string {
+	line := strings.TrimSpace(strings.SplitN(err.Error(), "\n", 2)[0])
+	if line == "" {
+		return "GitHub indisponível"
+	}
+	const limit = 180
+	runes := []rune(line)
+	if len(runes) > limit {
+		return string(runes[:limit-1]) + "…"
+	}
+	return line
 }
 
 func (s *Server) noteVariableSet(repo, variable, value string) {

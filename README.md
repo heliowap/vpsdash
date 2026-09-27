@@ -60,6 +60,9 @@ Serve. Ele preserva credenciais já existentes e pode ser executado de novo
 se alguma etapa ficar pendente. Ele lê as VPSs remotas do inventário privado
 e identifica o host local pelo DNS do Tailscale; ajuste `config.json` antes
 de executá-lo para uma frota diferente da configuração de exemplo.
+Se o host local ainda não estiver no inventário, o assistente o inclui como
+VPS após verificar a coleta SSH local. Antes de iniciar a unit, ele valida o
+inventário e mostra o caminho do arquivo caso haja um erro.
 No exemplo, as VPSs remotas começam como presença Tailscale e só passam a
 `vps` após a chave SSH ser verificada. O caminho de chave no inventário
 preserva essa intenção para uma nova execução do assistente.
@@ -104,6 +107,12 @@ automaticamente. Defina
 que o workflow daquele repositório contém `vars.AGENT_RUNNER || ...` ou
 `vars.CI_RUNNER || ...`, respectivamente. Repositórios sem esse contrato não
 recebem o controle de troca no painel.
+
+Confira o inventário antes de iniciar o serviço:
+
+```bash
+sudo -u vpsdash /home/vpsdash/bin/vpsdash check-config --config /home/vpsdash/.config/vpsdash/config.json
+```
 
 Uma URL de health pode apontar para um endereço público ou para o nome DNS
 de um host presente no inventário. Destinos privados só são aceitos quando
@@ -213,9 +222,11 @@ app.example.com {
 ```
 
 O proxy deve sobrescrever `X-Real-IP` e `X-Forwarded-For` com o IP da conexão
-recebida; não encaminhe um valor fornecido pelo navegador. O exemplo habilita
-`"trust_proxy_header": true` para esse proxy. Mantenha a opção ativa somente
-quando o proxy público sobrescrever esses cabeçalhos. Com
+recebida; não encaminhe um valor fornecido pelo navegador. O painel mantém
+`trust_proxy_header` desativado por padrão. Para limitar separadamente os
+clientes do domínio público, defina `"trust_proxy_header": true` na
+configuração privada somente após conferir que o proxy sobrescreve esses
+cabeçalhos. A rota do Tailscale Serve não exige essa opção. Com
 `tailscale_serve_host` configurado, o serviço identifica primeiro o IP da
 tailnet em `X-Forwarded-For`, que o Tailscale Serve sobrescreve. Ele usa esse
 IP mesmo se um cliente alterar `Host` e enviar um `X-Real-IP` falso.

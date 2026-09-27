@@ -175,6 +175,13 @@ func (s *Server) finishLogin(ip string, success bool, now time.Time) {
 	defer s.loginMu.Unlock()
 	attempts := s.loginAttempts[ip]
 	if attempts == nil {
+		// Release the global reservation if the client entry was lost.
+		if s.globalPending > 0 {
+			s.globalPending--
+		}
+		if !success {
+			s.globalFailures = append(s.globalFailures, now)
+		}
 		return
 	}
 	attempts.pending--
@@ -241,10 +248,20 @@ func (s *Server) loginClientIP(r *http.Request) string {
 		host = name
 	}
 	if s.Config.TailscaleServeHost != "" {
-		// Serve overwrites X-Forwarded-For with the tailnet source. Match its
-		// address before Host: a tailnet client can send a different Host and
-		// a forged X-Real-IP, while Serve still forwards the request.
-		if forwarded, err := netip.ParseAddr(r.Header.Get("X-Forwarded-For")); err == nil {
+		// Serve sets X-Forwarded-For to the tailnet source; taking the last
+		// element also handles a proxy that appends its observation to a chain.
+		// Match it before Host, which a client can spoof.
+		// CGNAT shares 100.64/10, so public clients behind that range also use
+		// this observed address as their per-IP key.
+		values := r.Header.Values("X-Forwarded-For")
+		forwardedValue := ""
+		if len(values) > 0 {
+			forwardedValue = values[len(values)-1]
+		}
+		if last := strings.LastIndexByte(forwardedValue, ','); last >= 0 {
+			forwardedValue = forwardedValue[last+1:]
+		}
+		if forwarded, err := netip.ParseAddr(strings.TrimSpace(forwardedValue)); err == nil {
 			forwarded = forwarded.Unmap()
 			if tailscaleIPv4.Contains(forwarded) || tailscaleIPv6.Contains(forwarded) {
 				return forwarded.String()

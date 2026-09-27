@@ -1,7 +1,6 @@
 {
   "listen": "127.0.0.1:8484",
   "database": "/home/vpsdash/vpsdash.db",
-  "trust_proxy_header": true,
   "tailscale_serve_host": "sample-vps.example.invalid",
   "hosts": [
     { "id": "intrador-tech-vps", "tailnet_name": "sample-vps.example.invalid", "kind": "vps", "ssh_user": "helio", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador-tech-vps" },
