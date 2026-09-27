@@ -194,11 +194,11 @@ The Sans face keeps Portuguese operational copy calm and compact. Mono is reserv
 
 ## Layout
 
-The desktop shell uses a sticky left rail (230px) and a content column capped at 1180px, with a fluid horizontal gutter (`clamp(28px, 5vw, 76px)`). At 1080px and below the rail narrows to icons (74px). At 720px and below the shell becomes one column: a compact top bar (62px), horizontal gutters (20px), and a fixed four-destination bottom navigation (69px plus the safe-area inset). At 390px and below the gutter tightens to 16px. The desktop top bar is 82px high.
+The desktop shell uses a sticky left rail (230px) and a content column capped at 1180px, with a fluid horizontal gutter (`clamp(28px, 5vw, 76px)`). At 1080px and below the rail narrows to icons (74px). At 720px and below the shell becomes one column: a compact top bar (62px), horizontal gutters (20px), and a fixed bottom navigation with four destinations, or five when file roots are configured (69px plus the safe-area inset). At 390px and below the gutter tightens to 16px. The desktop top bar is 82px high.
 
 The overview starts with observed state, observation time, a condition sentence, and any incident list. Host rows follow; activity counts come after hosts. The 390px healthy-state capture shows the first host row before the bottom navigation. When incidents exist, their list may occupy that space because triage takes precedence. On desktop, host measures sit beside the host name; on a phone they wrap beneath it, with the sparkline below the measures. Project, runner, queue, and session records keep the same ruled-row rhythm across widths.
 
-Sections are separated by rules and generous vertical space, while rows use compact internal padding. Candidate search precedes the candidate list, and long discovery lists are revealed on demand. Repository controls use bounded sheets; bulk controls and preset review stack into one column on a phone. The fixed bottom bar keeps all four destinations reachable while content has extra bottom padding to clear it.
+Sections are separated by rules and generous vertical space, while rows use compact internal padding. Candidate search precedes the candidate list, and long discovery lists are revealed on demand. Repository controls use bounded sheets; bulk controls and preset review stack into one column on a phone. The fixed bottom bar keeps every destination reachable while content has extra bottom padding to clear it.
 
 **The Incident First Rule.** Show the condition and its last observation before metrics or controls. A failed subject, its context, and its age stay together in the incident list.
 
@@ -229,6 +229,10 @@ Rows present the subject first, then host or repository context, an observation 
 ### Repository sheets and operation previews
 
 Each repository sheet groups the agent and CI backend rows. An individual switch reveals current and proposed values before confirmation, then reports the GitHub result in place. Bulk and preset operations use a pale preview panel listing each target and change, with Confirm and Cancel side by side where space allows. If GitHub did not confirm a current value, the preview says so and uses an explicit unknown-value confirmation label; a verified switch shows integration unavailable while its GitHub read is down.
+
+### File browser and viewer sheet
+
+Arquivos starts with the authorized roots as ruled rows (root path in Mono, host and "somente leitura" beneath). Inside a root, the host label and breadcrumbs lead; each crumb wraps rather than scrolling the page. Folder entries are ledger rows: name, then size and modification time in Mono. Folders come first. Entries the host refuses stay in the list with a lock, a muted name, the reason in words, and a "Bloqueado" stamp; they are not buttons and carry no size or time. A file opens in a bounded raised sheet: name and Mono measures in the header, state stamps ("Completo", "Truncado", "Binário", "Bloqueado"), and the text in Mono inside a region capped at `min(62vh, 640px)` that scrolls in both directions by itself, so the page never scrolls sideways. A truncated file says how much is shown and how much remains, with a control to load the next 512 KB beside "Voltar para a pasta".
 
 ### Login and transient states
 

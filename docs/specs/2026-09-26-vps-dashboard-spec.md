@@ -246,6 +246,54 @@ Usuário `vpsdash` próprio; chaves SSH em `~vpsdash/.ssh` (ed25519 por host,
 `command=` restrito onde possível). O painel lê tmux de `helio` via SSH
 read-only — sem escrita fora de `send-keys` (v2, por trás de confirmação).
 
+## Acesso a arquivos (v0.2, issue #8)
+
+Escopo aprovado: **somente leitura** (listar pastas e exibir texto), confinado
+a raízes explícitas por host. Sem upload, edição, renomeação ou download de
+binários. Sem schema novo: nada é persistido no SQLite.
+
+- **Duas listas de raízes.** `file_roots` no inventário (`config.json`) liga
+  a aba e filtra pedidos no painel. No host, a ponte `ssh-readonly.py` aceita
+  somente as raízes de `~/.config/vpsdash-files/roots` (ou do caminho fixado
+  com `--file-roots` no `command=` de `authorized_keys`). O arquivo precisa
+  pertencer à conta SSH ou a root e não pode ter escrita para grupo/outros,
+  nem a pasta. O painel não tem comando que altere esse arquivo; o acesso
+  efetivo é a interseção das duas listas.
+- **Protocolo.** Mesma chave e mesmo `command=` da coleta. Comandos
+  `vpsdash-files list <caminho-base64url>` e
+  `vpsdash-files read <caminho-base64url> <offset>`; resposta JSON em uma
+  linha, recusa como `{"error": "<código>"}` (`disabled`, `roots_insecure`,
+  `invalid`, `outside`, `blocked`, `not_found`, `not_dir`, `not_file`,
+  `unreadable`). Comando malformado segue a recusa geral da ponte (exit 126).
+  Os modos existentes (`sh -s` com digest aprovado, `vpsdash-health`,
+  `runner-units`) não mudam; a chave `gh-agents` não lê arquivos.
+- **Confinamento.** Caminho absoluto e normalizado; `realpath` precisa ficar
+  sob a raiz resolvida; abertura com `O_NOFOLLOW` e conferência de
+  `/proc/self/fd/N` contra o caminho resolvido (troca por link entre a
+  checagem e a abertura é recusada). Leitura só de arquivos regulares, com
+  `O_NONBLOCK` para que FIFOs não travem a ponte.
+- **Segredos.** Regras por componente do caminho, iguais em Python e Go
+  (`internal/files/rules.go`): `.env*`, `*.env`, `*.pem`, `*.key`, `*.p12`,
+  `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`, `*.gpg`, `id_*`, `*secret*`,
+  `*credential*`, `*password*`, `*passwd*`, `*_history`, `.netrc`, `.npmrc`,
+  `.pypirc`, `.pgpass`, `.htpasswd`, `.vault-token`, `shadow`, `gshadow` e o
+  conteúdo de `.ssh`, `.gnupg`, `.git`, `.aws`, `.azure`, `.kube`, `.docker`,
+  `.password-store`. Na listagem essas entradas aparecem como bloqueadas, sem
+  tamanho nem data; a leitura é recusada.
+- **Limites.** Página de 512 KB (o corte recua até 3 bytes para não partir um
+  caractere UTF-8); `truncated` e `next_offset` permitem pedir o restante.
+  Byte nulo ou UTF-8 inválido → `binary`, sem conteúdo. Pastas: até 1000
+  entradas, com `truncated`.
+- **API.** `GET /api/hosts/{id}/files?path=` e
+  `GET /api/hosts/{id}/file?path=&offset=`, atrás da sessão; o host precisa
+  ser uma VPS do inventário. SSH por conexão própria (`files:<host>`),
+  timeout de 10 s.
+- **`local: true`.** O mesmo código de regras roda em Go no processo
+  `vpsdash`, com as permissões dessa conta e somente o `file_roots` do
+  inventário. Os testes executam a ponte Python e a implementação Go sobre a
+  mesma árvore (links de fuga, `..`, segredos, binário, arquivo grande, FIFO,
+  nome não UTF-8) e exigem respostas idênticas.
+
 ## DoD da implementação
 
 - `vpsdash --version` e `systemd` unit user-level `vpsdash.service` sob
