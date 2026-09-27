@@ -168,10 +168,13 @@ type snippetView struct {
 }
 
 type interactiveHost struct {
-	ID           string        `json:"id"`
-	Terminal     bool          `json:"terminal"`
-	LocalCommand string        `json:"local_command"`
-	Snippets     []snippetView `json:"snippets"`
+	ID           string `json:"id"`
+	Terminal     bool   `json:"terminal"`
+	LocalCommand string `json:"local_command"`
+	// AttachCommands holds the read-only local ssh command per observed
+	// tmux session, for "abrir no terminal local".
+	AttachCommands map[string]string `json:"attach_commands"`
+	Snippets       []snippetView     `json:"snippets"`
 }
 
 func localCommand(host config.Host, argv []string) string {
@@ -209,14 +212,24 @@ func snippetTimeout(snippet config.Snippet) int {
 
 func (s *Server) interactiveInfo(w http.ResponseWriter, r *http.Request) {
 	sessionID, _ := s.Auth.SessionID(r, s.clock())
+	sessions, err := s.Store.Sessions(r.Context())
+	if err != nil {
+		errorResponse(w, 500, "Não foi possível ler as sessões.")
+		return
+	}
 	hosts := []interactiveHost{}
 	for _, host := range s.Config.Hosts {
 		if host.Kind != "vps" {
 			continue
 		}
-		view := interactiveHost{ID: host.ID, Terminal: host.Interactive() && s.Interactive != nil, Snippets: []snippetView{}}
+		view := interactiveHost{ID: host.ID, Terminal: host.Interactive() && s.Interactive != nil, AttachCommands: map[string]string{}, Snippets: []snippetView{}}
 		if host.SSHUser != "" && !host.Local {
 			view.LocalCommand = localCommand(host, nil)
+			for _, session := range sessions {
+				if session.HostID == host.ID && interactive.ValidSessionName(session.Name) {
+					view.AttachCommands[session.Name] = localCommand(host, interactive.AttachArgv(session.Name, true))
+				}
+			}
 		}
 		for _, snippet := range host.Snippets {
 			view.Snippets = append(view.Snippets, snippetView{Name: snippet.Name, Argv: snippet.Argv, Timeout: snippetTimeout(snippet)})

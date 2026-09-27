@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -228,7 +230,7 @@ func TestInteractiveRoutesExistOnlyOnPrivateListener(t *testing.T) {
 	}
 	privateClient := fx.login(fx.private.URL)
 	response, body := privateClient.do("GET", "/api/interactive", "", false)
-	if response.StatusCode != 200 || !strings.Contains(string(body), `"terminal":true`) || !strings.Contains(string(body), `"name":"literal"`) {
+	if response.StatusCode != 200 || !strings.Contains(string(body), `"terminal":true`) || !strings.Contains(string(body), `"name":"literal"`) || !strings.Contains(string(body), `"dev":"ssh -p `+strconv.Itoa(fx.ssh.Port())+` -t helio@127.0.0.1 tmux attach-session -r -t =dev"`) {
 		t.Fatalf("private interactive = %d %s", response.StatusCode, body)
 	}
 	if csp := response.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "'unsafe-inline'") {
@@ -241,6 +243,23 @@ func TestInteractiveRoutesExistOnlyOnPrivateListener(t *testing.T) {
 	anonymous := &client{fx: fx, base: fx.private.URL}
 	if response, _ := anonymous.do("GET", "/api/interactive", "", false); response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("anonymous private = %d", response.StatusCode)
+	}
+}
+
+func TestLocalCommandQuotesForLocalAndRemoteShell(t *testing.T) {
+	host := config.Host{SSHUser: "helio", TailnetName: "vps.example.invalid."}
+	if got := localCommand(host, nil); got != "ssh helio@vps.example.invalid" {
+		t.Fatalf("shell command = %q", got)
+	}
+	got := localCommand(host, interactive.AttachArgv("agente 1", true))
+	if got != `ssh -t helio@vps.example.invalid tmux attach-session -r -t ''\''=agente 1'\'''` {
+		t.Fatalf("attach command = %q", got)
+	}
+	// The local shell removes one layer; ssh joins the words for the remote
+	// shell, which must see the name as one literal argument.
+	output, err := exec.Command("sh", "-c", `printf '%s\n' `+strings.TrimPrefix(got, "ssh -t helio@vps.example.invalid ")).Output()
+	if err != nil || strings.TrimSpace(string(output)) != "tmux\nattach-session\n-r\n-t\n'=agente 1'" {
+		t.Fatalf("local shell words = %q, %v", output, err)
 	}
 }
 

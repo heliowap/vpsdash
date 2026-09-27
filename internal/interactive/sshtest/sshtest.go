@@ -32,13 +32,15 @@ type Server struct {
 	config   *ssh.ServerConfig
 	hostKey  ssh.PublicKey
 
-	mu       sync.Mutex
-	commands []string
-	ptys     []string
-	resizes  []Resize
-	inputs   []byte
-	users    []string
-	wg       sync.WaitGroup
+	mu         sync.Mutex
+	authorized [][]byte
+	exec       func(command string, stdin io.Reader, stdout io.Writer) int
+	commands   []string
+	ptys       []string
+	resizes    []Resize
+	inputs     []byte
+	users      []string
+	wg         sync.WaitGroup
 }
 
 // GenerateKey writes an unencrypted OpenSSH Ed25519 private key to path.
@@ -72,12 +74,15 @@ func Start(authorized ssh.PublicKey, dir string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{Dir: dir, hostKey: hostSigner.PublicKey()}
+	s.Authorize(authorized)
 	s.config = &ssh.ServerConfig{PublicKeyCallback: func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-		if authorized != nil && string(key.Marshal()) == string(authorized.Marshal()) {
-			s.mu.Lock()
-			s.users = append(s.users, meta.User())
-			s.mu.Unlock()
-			return &ssh.Permissions{}, nil
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for _, allowed := range s.authorized {
+			if string(key.Marshal()) == string(allowed) {
+				s.users = append(s.users, meta.User())
+				return &ssh.Permissions{}, nil
+			}
 		}
 		return nil, fmt.Errorf("unknown key")
 	}}
@@ -90,6 +95,23 @@ func Start(authorized ssh.PublicKey, dir string) (*Server, error) {
 	s.wg.Add(1)
 	go s.serve()
 	return s, nil
+}
+
+// Authorize accepts another client key.
+func (s *Server) Authorize(key ssh.PublicKey) {
+	if key == nil {
+		return
+	}
+	s.mu.Lock()
+	s.authorized = append(s.authorized, key.Marshal())
+	s.mu.Unlock()
+}
+
+// HandleExec replaces the default "sh -c" handling of non-PTY exec requests.
+func (s *Server) HandleExec(handler func(command string, stdin io.Reader, stdout io.Writer) int) {
+	s.mu.Lock()
+	s.exec = handler
+	s.mu.Unlock()
 }
 
 // KnownHostsLine returns the known_hosts entry for the server address.
@@ -278,6 +300,13 @@ func (s *Server) echoShell(channel ssh.Channel) {
 }
 
 func (s *Server) run(channel ssh.Channel, command string) {
+	s.mu.Lock()
+	handler := s.exec
+	s.mu.Unlock()
+	if handler != nil {
+		exitStatus(channel, handler(command, channel, channel))
+		return
+	}
 	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = s.Dir
 	cmd.Stdout = channel
