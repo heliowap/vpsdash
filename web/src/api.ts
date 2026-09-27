@@ -42,5 +42,12 @@ export const api = {
     request<JobLog>(`/api/repos/${repo.split('/').map(encodeURIComponent).join('/')}/jobs/${id}/log`, { signal }),
   preset: (name: string, csrf: string) => request<{ results: Record<string, string> }>(`/api/presets/${name}`, { method: 'POST' }, csrf),
   runnerUnit: (host: string, unit: string, action: 'restart' | 'drain' | 'drain/cancel', csrf: string) =>
-    request<UnitOp>(`/api/runner-units/${encodeURIComponent(host)}/${encodeURIComponent(unit)}/${action}`, { method: 'POST' }, csrf)
+    request<UnitOp>(`/api/runner-units/${encodeURIComponent(host)}/${encodeURIComponent(unit)}/${action}`, { method: 'POST' }, csrf),
+  pushStatus: () => request<{ configured: boolean; public_key: string }>('/api/push'),
+  pushSubscribe: (subscription: PushSubscriptionJSON, csrf: string) =>
+    request<{ subscribed: boolean }>('/api/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription) }, csrf),
+  pushUnsubscribe: (endpoint: string, csrf: string) =>
+    request<{ subscribed: boolean }>('/api/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint }) }, csrf),
+  pushTest: (endpoint: string, csrf: string) =>
+    request<{ sent: boolean }>('/api/push/test', { method: 'POST', body: JSON.stringify({ endpoint }) }, csrf)
 }

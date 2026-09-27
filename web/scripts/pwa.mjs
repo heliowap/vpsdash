@@ -63,6 +63,46 @@ self.addEventListener('fetch', event => {
   if (!PRECACHE.includes(url.pathname)) return;
   event.respondWith(caches.match(url.pathname).then(cached => cached || fetch(request)));
 });
+
+function sameOriginURL(value) {
+  try {
+    const url = new URL(value || '/', self.location.origin);
+    return url.origin === self.location.origin ? url.pathname + url.hash : '/';
+  } catch {
+    return '/';
+  }
+}
+
+self.addEventListener('push', event => {
+  let message = {};
+  try {
+    message = event.data ? event.data.json() : {};
+  } catch {
+    message = { body: event.data ? event.data.text() : '' };
+  }
+  const title = typeof message.title === 'string' && message.title ? message.title : 'vpsdash';
+  event.waitUntil(self.registration.showNotification(title, {
+    body: typeof message.body === 'string' ? message.body : '',
+    tag: typeof message.tag === 'string' ? message.tag : undefined,
+    icon: '/icons/vpsdash-192.png',
+    badge: '/icons/vpsdash-192.png',
+    lang: 'pt-BR',
+    data: { url: sameOriginURL(message.url) }
+  }));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = sameOriginURL(event.notification.data && event.notification.data.url);
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windows => {
+    const open = windows.find(client => new URL(client.url).origin === self.location.origin);
+    if (open) {
+      open.postMessage({ type: 'vpsdash:navigate', url: target });
+      return open.focus();
+    }
+    return self.clients.openWindow(target);
+  }));
+});
 `)
 }
 

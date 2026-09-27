@@ -233,6 +233,15 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
 .log-output { margin: 0; max-height: min(60vh, 540px); overflow: auto; overscroll-behavior: contain; padding: 12px 14px; background: #ecefe9; color: var(--ink); border-radius: 8px; font: 500 12px/1.6 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
 .log-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .log-actions a { text-decoration: none; }
+.channel-list { border-top: 1px solid var(--rule); }
+.channel-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; column-gap: 13px; row-gap: 10px; align-items: center; padding: 15px 0; border-bottom: 1px solid var(--rule); }
+.channel-row > svg { color: var(--action); }
+.channel-row > div:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.channel-row strong { font-size: 15px; font-weight: 600; }
+.channel-row small { color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.channel-row code { font-family: 'IBM Plex Mono', monospace; font-size: 11px; white-space: nowrap; }
+.channel-actions { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.channel-row .inline-feedback { grid-column: 2 / -1; }
 .info-note { display: flex; align-items: start; gap: 11px; color: var(--muted); font-size: 13px; padding-top: 24px; }
 .info-note p { margin: 0; line-height: 1.5; }
 .info-note code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
@@ -357,6 +366,8 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
   .log-sheet header { align-items: flex-start; }
   .log-output { max-height: 55vh; padding: 10px 11px; font-size: 11.5px; }
   .preset-confirm { flex-wrap: wrap; justify-content: flex-end; }
+  .channel-row { align-items: start; }
+  .channel-row strong { font-size: 14px; }
 }
 
 @media (max-width: 390px) {
