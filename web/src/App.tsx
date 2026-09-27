@@ -79,10 +79,25 @@ function drainedUnit(project: Project, ops: Map<string, UnitOp>) {
   return Boolean(project.native && op && op.action === 'drain' && op.status === 'done')
 }
 
-// Runners whose unit is still stopped after a completed drain.
-function drainedRunnerNames(data: Dashboard) {
+// The collector marks a failed reading as planned while a drain holds the
+// unit stopped or a panel restart is still settling. It never alerts, so it
+// is not an incident either.
+type PlannedStop = 'drain' | 'restart'
+function plannedStop(project: Project, ops: Map<string, UnitOp>): PlannedStop | null {
+  if (!project.native || project.check_ok !== false) return null
+  if (drainedUnit(project, ops)) return 'drain'
+  return project.check_planned ? 'restart' : null
+}
+
+// Runners whose unit is in a planned stop.
+function plannedRunnerStops(data: Dashboard) {
   const ops = latestUnitOps(data)
-  return new Set(data.projects.filter(project => project.check_ok === false && drainedUnit(project, ops)).map(project => runnerNameForUnit(project.name)))
+  const result = new Map<string, PlannedStop>()
+  for (const project of data.projects) {
+    const planned = plannedStop(project, ops)
+    if (planned) result.set(runnerNameForUnit(project.name), planned)
+  }
+  return result
 }
 
 const Sparkline = memo(function Sparkline({ points, label }: { points?: Metric[]; label: string }) {
@@ -147,9 +162,9 @@ function incidents(data: Dashboard): Incident[] {
   const items: Incident[] = []
   for (const host of data.hosts) if (host.kind === 'vps' && host.seen_at && !host.online && Date.now() / 1000 - host.seen_at <= 120) items.push({ id: `host-${host.id}`, title: `${host.id} está offline`, detail: 'Verifique o acesso SSH e a conexão pela tailnet.', age: host.seen_at })
   const unitOps = latestUnitOps(data)
-  const drainedRunners = drainedRunnerNames(data)
-  for (const project of data.projects) if (project.monitored && project.check_ok === false && !drainedUnit(project, unitOps)) items.push({ id: `project-${project.id}`, title: `${project.name} falhou`, detail: `Em ${project.host_id} · verifique o critério monitorado.`, age: project.checked_at })
-  for (const runner of data.runners) if (runner.status === 'offline' && !drainedRunners.has(runner.name)) items.push({ id: `runner-${runner.runner_id}`, title: `${runner.name} está offline`, detail: `Runner de ${runner.repo}.`, age: runner.seen_at })
+  const plannedRunners = plannedRunnerStops(data)
+  for (const project of data.projects) if (project.monitored && project.check_ok === false && !plannedStop(project, unitOps)) items.push({ id: `project-${project.id}`, title: `${project.name} falhou`, detail: `Em ${project.host_id} · verifique o critério monitorado.`, age: project.checked_at })
+  for (const runner of data.runners) if (runner.status === 'offline' && !plannedRunners.has(runner.name)) items.push({ id: `runner-${runner.runner_id}`, title: `${runner.name} está offline`, detail: `Runner de ${runner.repo}.`, age: runner.seen_at })
   for (const [scope] of Object.entries(data.collector_errors)) {
     const [kind, id = ''] = scope.split(':', 2)
     if (kind === 'host' && items.some(item => item.id === `host-${id}`)) continue
@@ -330,11 +345,11 @@ function Projects({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; on
   const unitOps = latestUnitOps(data)
   function row(project: Project) {
     const open = expanded === project.id
-    const drained = drainedUnit(project, unitOps) && project.check_ok === false
+    const planned = plannedStop(project, unitOps)
     const contents = <>
-      <span className={`status-dot ${drained || !project.monitored || project.check_ok === undefined ? 'is-unknown' : project.check_ok ? 'is-good' : 'is-bad'}`} />
+      <span className={`status-dot ${planned || !project.monitored || project.check_ok === undefined ? 'is-unknown' : project.check_ok ? 'is-good' : 'is-bad'}`} />
       <span className="row-copy"><strong>{project.name}</strong><small>{project.host_id} · {project.native ? 'unit nativa' : project.source} · {project.monitored ? age(project.checked_at) : 'candidato'}</small></span>
-      <span className={`state-stamp ${drained ? 'stamp-unknown' : project.check_ok === false ? 'stamp-bad' : ''}`}>{drained ? 'Drenada' : project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
+      <span className={`state-stamp ${planned ? 'stamp-unknown' : project.check_ok === false ? 'stamp-bad' : ''}`}>{planned === 'drain' ? 'Drenada' : planned ? 'Reiniciando' : project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
     </>
     return <article className="project-row" key={project.id}>
       <button className="row-main" type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : project.id)}>{contents}{open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}</button>
@@ -484,7 +499,7 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
   ]))
   const unknownPresetTargets = presetTargets.filter(target => !target.currentKnown).length
   const pendingPreset = presets.find(preset => preset.id === presetPending)
-  const drainedRunners = drainedRunnerNames(data)
+  const plannedRunners = plannedRunnerStops(data)
   const queue = Object.entries(data.queued).flatMap(([repo, runs]) => runs.map(run => ({ repo, ...run })))
   async function applyPreset(name: string) {
     setBusy(true); setFeedback(null)
@@ -501,7 +516,7 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
   return <div className="page-body"><div className="page-title"><h1>Frota</h1><p>Runners, fila, logs de execução e backends operados pelas variáveis que os workflows já leem.</p></div>
     {!data.repositories.length ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">Adicione repositórios ao inventário para iniciar a leitura de runners e fila.</div></section> : !fleetObserved ? <section className="ledger-section"><div className="section-heading"><h2>Fonte da frota</h2></div><div className="empty-line">{fleetErrors ? 'GitHub App indisponível. Runners e fila ainda são desconhecidos.' : 'Aguardando a primeira leitura do GitHub App. Runners e fila ainda são desconhecidos.'}</div></section> : <>
       {fleetUncertain && <p className="notice notice-error" role="alert"><AlertCircle size={18} />Leitura da frota parcial ou desatualizada. Confirme o estado antes de agir.</p>}
-      <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} drained={drainedRunners.has(runner.name)} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
+      <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} planned={plannedRunners.get(runner.name)} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
       <section className="ledger-section"><div className="section-heading"><h2>Fila</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}`}</span></div>{queue.length ? <div className="ruled-list">{queue.map(run => <a className="queue-row" key={`${run.repo}-${run.id}`} href={run.html_url} target="_blank" rel="noreferrer"><Clock3 size={18} /><span><strong>{run.display_title || run.name}</strong><small>{run.repo}</small></span><ArrowUpRight size={17} /></a>)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual da fila não está disponível.' : 'Nenhum job aguardando runner.'}</div>}</section>
     </>}
     {data.repositories.length > 0 && <Executions />}
@@ -725,9 +740,10 @@ function RunnerUnitRow({ unit, op, data, csrf, onRefresh, refreshFailed }: { uni
   const unitUncertain = refreshFailed || Boolean(data.collector_errors[`runner-units:${unit.host_id}`]) || !unit.checked_at || Date.now() / 1000 - unit.checked_at > 120
   const running = op?.status === 'running'
   const drained = op?.action === 'drain' && op.status === 'done' && unit.check_ok === false
+  const settling = !running && !drained && unit.check_ok === false && Boolean(unit.check_planned)
   const active = unit.check_ok === true
-  const stamp = running ? op.action === 'restart' ? 'Reiniciando' : 'Drenando' : unitUncertain ? 'Não confirmado' : drained ? 'Drenada' : unit.check_ok === undefined ? 'Aguardando' : active ? 'Ativa' : 'Parada'
-  const stampClass = running || unitUncertain || drained || unit.check_ok === undefined ? 'stamp-unknown' : active ? '' : 'stamp-bad'
+  const stamp = running ? op.action === 'restart' ? 'Reiniciando' : 'Drenando' : unitUncertain ? 'Não confirmado' : drained ? 'Drenada' : settling ? 'Reiniciando' : unit.check_ok === undefined ? 'Aguardando' : active ? 'Ativa' : 'Parada'
+  const stampClass = running || unitUncertain || drained || settling || unit.check_ok === undefined ? 'stamp-unknown' : active ? '' : 'stamp-bad'
   const busyJob = Boolean(runner?.busy && fleetCurrent)
   async function run(action: 'restart' | 'drain' | 'drain/cancel') {
     setBusy(true); setError('')
@@ -759,10 +775,10 @@ function RunnerUnitRow({ unit, op, data, csrf, onRefresh, refreshFailed }: { uni
   </article>
 }
 
-function RunnerRow({ runner, uncertain, drained }: { runner: Runner; uncertain: boolean; drained: boolean }) {
-  const lastState = runner.job || (runner.busy ? 'Ocupado' : runner.status === 'online' ? 'Livre' : drained ? 'Offline · unit drenada pelo painel' : 'Offline')
-  const plannedStop = drained && runner.status === 'offline'
-  return <div className="runner-row"><span className={`status-dot ${uncertain || plannedStop ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain || plannedStop ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : plannedStop ? 'Drenado' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
+function RunnerRow({ runner, uncertain, planned }: { runner: Runner; uncertain: boolean; planned?: PlannedStop }) {
+  const lastState = runner.job || (runner.busy ? 'Ocupado' : runner.status === 'online' ? 'Livre' : planned === 'drain' ? 'Offline · unit drenada pelo painel' : planned ? 'Offline · unit reiniciando pelo painel' : 'Offline')
+  const plannedStop = Boolean(planned) && runner.status === 'offline'
+  return <div className="runner-row"><span className={`status-dot ${uncertain || plannedStop ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain || plannedStop ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : plannedStop ? planned === 'drain' ? 'Drenado' : 'Reiniciando' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
 }
 
 const agentStateLabels: Record<string, string> = { working: 'Trabalhando', waiting: 'Esperando input', idle: 'Ociosa' }

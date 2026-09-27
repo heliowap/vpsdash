@@ -51,11 +51,31 @@ func TestMigrationsAndCandidatePromotion(t *testing.T) {
 	if got, err := s.ConsecutiveFailures(ctx, projects[0].ID); err != nil || got != 1 {
 		t.Fatalf("failures = %d, %v", got, err)
 	}
+	// A planned reading is shown as failed but breaks the streak.
+	if err := s.RecordPlannedCheck(ctx, projects[0].ID, "inactive (drenada)", time.Unix(101, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.ConsecutiveFailures(ctx, projects[0].ID); err != nil || got != 0 {
+		t.Fatalf("failures after planned check = %d, %v", got, err)
+	}
+	projects, err = s.Projects(ctx)
+	if err != nil || projects[0].CheckOK == nil || *projects[0].CheckOK || !projects[0].CheckPlanned {
+		t.Fatalf("planned reading = %+v, %v", projects[0], err)
+	}
+	if err := s.RecordCheck(ctx, projects[0].ID, false, "inactive", time.Unix(102, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.ConsecutiveFailures(ctx, projects[0].ID); err != nil || got != 1 {
+		t.Fatalf("failures after planned check and a real failure = %d, %v", got, err)
+	}
+	if projects, err = s.Projects(ctx); err != nil || projects[0].CheckPlanned {
+		t.Fatalf("real failure still planned = %+v, %v", projects[0], err)
+	}
 }
 
 func TestConsecutiveFailuresUsesBoundedIndexScan(t *testing.T) {
 	s := newTestStore(t)
-	rows, err := s.db.Query(`EXPLAIN QUERY PLAN SELECT ok FROM checks WHERE project_id=? ORDER BY ts DESC,rowid DESC LIMIT 3`, 1)
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN SELECT ok,planned FROM checks WHERE project_id=? ORDER BY ts DESC,rowid DESC LIMIT 3`, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

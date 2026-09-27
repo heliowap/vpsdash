@@ -18,6 +18,15 @@ func (u RunnerUnit) Healthy() bool {
 	return u.LoadState == "loaded" && u.ActiveState == "active"
 }
 
+// Transitioning reports a unit systemd is still starting or stopping.
+func (u RunnerUnit) Transitioning() bool {
+	switch u.ActiveState {
+	case "activating", "deactivating", "reloading":
+		return true
+	}
+	return false
+}
+
 func ParseRunnerUnits(raw string) (map[string]RunnerUnit, error) {
 	units := map[string]RunnerUnit{}
 	scanner := bufio.NewScanner(strings.NewReader(raw))

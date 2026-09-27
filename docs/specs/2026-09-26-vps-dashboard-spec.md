@@ -224,9 +224,12 @@ Restart e drenagem das units `actions.runner.<runner-name>.service` do
 - **Estado**: tabela `runner_unit_ops` (migração 5) com ação, status
   (`running|done|failed|cancelled|expired`), detalhe e horários; a última
   operação por unit vai em `unit_ops` no `/api/dashboard`. Após cada
-  operação o coletor relê as units. Unit parada por drenagem concluída
-  registra o check como falho, sem `project_down`, e a UI a mostra como
-  drenada. Retenção de 90 dias, preservando a última operação de cada unit.
+  operação o coletor relê as units. Unit parada por drenagem concluída,
+  com operação do painel em andamento ou ainda `activating`/`deactivating`
+  até 2 min após um reinício registra o check como falho e planejado
+  (`checks.planned`, migração 6): não conta para as três falhas seguidas,
+  interrompe a sequência e não gera `project_down`; a UI a mostra como
+  drenada ou reiniciando, fora da lista de incidentes. Retenção de 90 dias, preservando a última operação de cada unit.
 - **API**: `POST /api/runner-units/{host}/{unit}/restart`, `.../drain` e
   `.../drain/cancel`, com sessão e CSRF. Só aceita units nativas já
   observadas em um host de `runner_unit_hosts`; uma operação por unit.

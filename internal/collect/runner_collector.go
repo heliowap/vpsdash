@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/heliowap/vpsdash/internal/config"
+	"github.com/heliowap/vpsdash/internal/store"
 )
 
 func (c *Collector) runnerUnitLoop(ctx context.Context, account config.RunnerUnitHost) {
@@ -58,10 +59,10 @@ func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units ma
 	if err != nil {
 		return err
 	}
-	drained := map[string]bool{}
+	latest := map[string]store.UnitOp{}
 	for _, op := range ops {
-		if op.HostID == hostID && op.Drained() {
-			drained[op.Unit] = true
+		if op.HostID == hostID {
+			latest[op.Unit] = op
 		}
 	}
 	for _, unit := range units {
@@ -70,10 +71,11 @@ func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units ma
 			return err
 		}
 		detail := unit.LoadState + "/" + unit.ActiveState
-		if drained[unit.Name] && !unit.Healthy() {
-			// The operator stopped this unit on purpose: keep the reading,
-			// but do not turn the planned stop into a project_down alert.
-			if err := c.Store.RecordCheck(ctx, p.ID, false, detail+" (drenada pelo painel)", now); err != nil {
+		if reason := plannedStopReason(latest[unit.Name], unit, now); reason != "" && !unit.Healthy() {
+			// The operator stopped or is restarting this unit on purpose:
+			// keep the reading, but as a neutral row that neither counts
+			// toward nor extends a project_down failure streak.
+			if err := c.Store.RecordPlannedCheck(ctx, p.ID, detail+" ("+reason+")", now); err != nil {
 				return err
 			}
 			continue
@@ -93,4 +95,26 @@ func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units ma
 		}
 	}
 	return nil
+}
+
+// restartSettleGrace covers a unit systemd still reports as activating or
+// deactivating right after a panel restart finished.
+const restartSettleGrace = 2 * time.Minute
+
+// plannedStopReason explains why a non-active reading is expected: the unit
+// was drained, a panel operation on it is still running, or systemd is still
+// settling a restart the panel just finished. It returns "" otherwise.
+func plannedStopReason(op store.UnitOp, unit RunnerUnit, now time.Time) string {
+	switch {
+	case op.ID == 0:
+		return ""
+	case op.Drained():
+		return "drenada pelo painel"
+	case op.Status == "running":
+		return "operação do painel em andamento"
+	case op.Action == "restart" && op.Status == "done" && unit.Transitioning() &&
+		now.Sub(time.Unix(op.FinishedAt, 0)) < restartSettleGrace:
+		return "reiniciada pelo painel"
+	}
+	return ""
 }

@@ -49,7 +49,11 @@ type Project struct {
 	HealthURL string `json:"health_url,omitempty"`
 	Expected  string `json:"expected,omitempty"`
 	CheckOK   *bool  `json:"check_ok,omitempty"`
-	CheckedAt int64  `json:"checked_at,omitempty"`
+	// CheckPlanned marks a failed reading caused by a panel operation (a
+	// drain or a restart in progress). It is shown, but never counts as a
+	// failure or an incident.
+	CheckPlanned bool  `json:"check_planned,omitempty"`
+	CheckedAt    int64 `json:"checked_at,omitempty"`
 }
 
 func Open(path string) (*Store, error) {
@@ -164,6 +168,7 @@ CREATE TABLE minutes_cursor (
   finished_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_runner_unit_ops_unit ON runner_unit_ops(host_id, unit, id);`,
+	`ALTER TABLE checks ADD COLUMN planned INTEGER NOT NULL DEFAULT 0 CHECK(planned IN (0,1));`,
 }
 
 func migrate(db *sql.DB) error {
@@ -294,7 +299,7 @@ ON CONFLICT(host_id,name,source) DO UPDATE SET monitored=1,native=1,health_url=N
 
 func (s *Store) Projects(ctx context.Context) ([]Project, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT p.id,p.host_id,p.name,p.source,p.monitored,p.native,COALESCE(p.health_url,''),COALESCE(p.expected,''),
-c.ok,COALESCE(c.ts,0) FROM projects p LEFT JOIN checks c ON c.rowid=(SELECT rowid FROM checks WHERE project_id=p.id ORDER BY ts DESC,rowid DESC LIMIT 1)
+c.ok,COALESCE(c.planned,0),COALESCE(c.ts,0) FROM projects p LEFT JOIN checks c ON c.rowid=(SELECT rowid FROM checks WHERE project_id=p.id ORDER BY ts DESC,rowid DESC LIMIT 1)
 ORDER BY p.monitored DESC,p.host_id,p.name`)
 	if err != nil {
 		return nil, err
@@ -303,13 +308,14 @@ ORDER BY p.monitored DESC,p.host_id,p.name`)
 	result := []Project{}
 	for rows.Next() {
 		var p Project
-		var monitored, native int
+		var monitored, native, planned int
 		var ok sql.NullInt64
-		if err := rows.Scan(&p.ID, &p.HostID, &p.Name, &p.Source, &monitored, &native, &p.HealthURL, &p.Expected, &ok, &p.CheckedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.HostID, &p.Name, &p.Source, &monitored, &native, &p.HealthURL, &p.Expected, &ok, &planned, &p.CheckedAt); err != nil {
 			return nil, err
 		}
 		p.Monitored = monitored != 0
 		p.Native = native != 0
+		p.CheckPlanned = planned != 0
 		if ok.Valid {
 			value := ok.Int64 != 0
 			p.CheckOK = &value
@@ -344,20 +350,28 @@ func (s *Store) RecordCheck(ctx context.Context, id int64, ok bool, detail strin
 	return err
 }
 
+// RecordPlannedCheck keeps a failed reading caused by a panel operation. The
+// row is neutral: it neither counts toward nor extends a failure streak.
+func (s *Store) RecordPlannedCheck(ctx context.Context, id int64, detail string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO checks(project_id,ts,ok,planned,detail) VALUES (?,?,0,1,?)`, id, at.Unix(), detail)
+	return err
+}
+
 func (s *Store) ConsecutiveFailures(ctx context.Context, id int64) (int, error) {
 	// idx_checks_proj_ts lets SQLite read only the three newest rows for this project.
-	rows, err := s.db.QueryContext(ctx, `SELECT ok FROM checks WHERE project_id=? ORDER BY ts DESC,rowid DESC LIMIT 3`, id)
+	// A planned (neutral) row breaks the streak like a success does.
+	rows, err := s.db.QueryContext(ctx, `SELECT ok,planned FROM checks WHERE project_id=? ORDER BY ts DESC,rowid DESC LIMIT 3`, id)
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
 	count := 0
 	for rows.Next() {
-		var ok int
-		if err := rows.Scan(&ok); err != nil {
+		var ok, planned int
+		if err := rows.Scan(&ok, &planned); err != nil {
 			return 0, err
 		}
-		if ok != 0 {
+		if ok != 0 || planned != 0 {
 			break
 		}
 		count++

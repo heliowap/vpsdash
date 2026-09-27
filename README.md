@@ -215,7 +215,12 @@ argumentos, sem shell e sem sudo, e recusa o timer de limpeza. A chave de
   ser cancelado.
 - Uma unit drenada fica parada até **Iniciar** (o mesmo `restart`). Enquanto
   isso, as leituras continuam registradas, mas a parada planejada não gera
-  alerta nem aparece como incidente.
+  alerta nem aparece como incidente. O mesmo vale enquanto uma operação do
+  painel está em andamento e, por até 2 min depois de um reinício, enquanto
+  o systemd ainda mostra a unit `activating`/`deactivating`. Essas leituras
+  são neutras: não contam para as três falhas seguidas e interrompem a
+  sequência, então uma falha real depois do reinício só alerta após três
+  verificações falhas próprias.
 
 Cada pedido é gravado na tabela `runner_unit_ops` (ação, resultado,
 horários) e no log do serviço. Se o serviço reiniciar durante uma drenagem,

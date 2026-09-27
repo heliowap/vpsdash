@@ -222,8 +222,90 @@ func TestRunnerUnitDrainWaitsForIdleRunnerThenStopsQuietly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range projects {
-		if p.Name == opsUnit && (p.CheckOK == nil || *p.CheckOK) {
-			t.Fatalf("drained unit reported healthy: %+v", p)
+		if p.Name == opsUnit && (p.CheckOK == nil || *p.CheckOK || !p.CheckPlanned) {
+			t.Fatalf("drained unit not shown as a planned stop: %+v", p)
+		}
+	}
+
+	// Iniciar: while systemd is still stopping and starting the unit, the
+	// polls stay neutral and do not inherit the drained readings as failures.
+	fake.mu.Lock()
+	fake.release = make(chan struct{})
+	fake.mu.Unlock()
+	restart, err := c.StartRunnerUnitOp(ctx, "vps", opsUnit, "restart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"deactivating", "deactivating", "activating", "activating"} {
+		fake.setSnapshot(opsUnit + "\tloaded\t" + state + "\ngh-agents-cleanup.timer\tloaded\tactive\n")
+		if err := c.pollRunnerUnits(ctx, c.Config.RunnerUnitHosts[0]); err != nil {
+			t.Fatal(err)
+		}
+		assertPlannedUnit(t, s, state)
+	}
+	close(fake.release)
+	if done := waitUnitOp(t, c, s, restart.ID); done.Status != "done" {
+		t.Fatalf("restart audit = %+v", done)
+	}
+	// systemd may still report the unit as activating just after the restart
+	// command returned; that settling reading stays neutral too.
+	for i := 0; i < 3; i++ {
+		if err := c.pollRunnerUnits(ctx, c.Config.RunnerUnitHosts[0]); err != nil {
+			t.Fatal(err)
+		}
+		assertPlannedUnit(t, s, "activating after restart")
+	}
+
+	// A genuine failure after the restart still alerts after three real
+	// failed checks, and not before.
+	fake.setSnapshot(opsUnit + "\tloaded\tfailed\ngh-agents-cleanup.timer\tloaded\tactive\n")
+	for i := 0; i < 2; i++ {
+		if err := c.pollRunnerUnits(ctx, c.Config.RunnerUnitHosts[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if alerts, err := s.PendingAlerts(ctx); err != nil || len(alerts) != 0 {
+		t.Fatalf("alert before three real failures: %+v, %v", alerts, err)
+	}
+	// Past the settling grace, a unit stuck in activating is a real failure.
+	stuck := map[string]RunnerUnit{opsUnit: {Name: opsUnit, LoadState: "loaded", ActiveState: "activating"}}
+	if err := c.saveRunnerUnits(ctx, "vps", stuck, time.Now().Add(restartSettleGrace+time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	alerts, err = s.PendingAlerts(ctx)
+	if err != nil || len(alerts) == 0 || alerts[0].Kind != "project_down" || !strings.Contains(alerts[0].Subject, opsUnit) {
+		t.Fatalf("genuine failure did not alert: %+v, %v", alerts, err)
+	}
+	projects, err = s.Projects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range projects {
+		if p.Name == opsUnit && (p.CheckOK == nil || *p.CheckOK || p.CheckPlanned) {
+			t.Fatalf("genuine failure shown as planned: %+v", p)
+		}
+	}
+}
+
+func assertPlannedUnit(t *testing.T, s *store.Store, when string) {
+	t.Helper()
+	ctx := context.Background()
+	if alerts, err := s.PendingAlerts(ctx); err != nil || len(alerts) != 0 {
+		t.Fatalf("%s: planned stop alerted: %+v, %v", when, alerts, err)
+	}
+	projects, err := s.Projects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range projects {
+		if p.Name != opsUnit {
+			continue
+		}
+		if p.CheckOK == nil || *p.CheckOK || !p.CheckPlanned {
+			t.Fatalf("%s: unit not shown as a planned stop: %+v", when, p)
+		}
+		if n, err := s.ConsecutiveFailures(ctx, p.ID); err != nil || n != 0 {
+			t.Fatalf("%s: planned readings counted as failures: %d, %v", when, n, err)
 		}
 	}
 }
