@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeToken(w http.ResponseWriter) {
@@ -141,6 +142,74 @@ func TestJobUsesRepositoryPath(t *testing.T) {
 	}
 	if _, err := c.Job(context.Background(), "heliowap/vpsdash", 13); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign job err = %v", err)
+	}
+}
+
+func TestJobLogTailBoundsSlowDownload(t *testing.T) {
+	previous := logDownloadTimeout
+	logDownloadTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { logDownloadTimeout = previous })
+	release := make(chan struct{})
+	blob := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Ignore Range and stall mid-stream, like a slow host sending a big log.
+		_, _ = w.Write([]byte("inicio\n"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer blob.Close()
+	defer close(release)
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/7/access_tokens":
+			writeToken(w)
+		case "/repos/heliowap/vpsdash/actions/jobs/77/logs":
+			http.Redirect(w, r, blob.URL+"/signed/job-77.txt?sig=secret", http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	started := time.Now()
+	_, err := c.JobLogTail(context.Background(), "heliowap/vpsdash", 77, 120)
+	if err == nil {
+		t.Fatal("stalled download returned no error")
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("download held for %s", elapsed)
+	}
+	if strings.Contains(err.Error(), "sig=secret") {
+		t.Fatalf("error leaks signed URL: %v", err)
+	}
+}
+
+func TestJobLogTailRejectsDeclaredOversizedLog(t *testing.T) {
+	var written int
+	blob := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(maxLogStream+1))
+		chunk := make([]byte, 32<<10)
+		for written < maxLogStream+1 {
+			n, err := w.Write(chunk[:min(len(chunk), maxLogStream+1-written)])
+			written += n
+			if err != nil {
+				return
+			}
+		}
+	}))
+	defer blob.Close()
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/7/access_tokens":
+			writeToken(w)
+		case "/repos/heliowap/vpsdash/actions/jobs/78/logs":
+			http.Redirect(w, r, blob.URL+"/signed/job-78.txt", http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	if _, err := c.JobLogTail(context.Background(), "heliowap/vpsdash", 78, 120); !errors.Is(err, ErrLogTooLarge) {
+		t.Fatalf("err = %v, want ErrLogTooLarge", err)
 	}
 }
 

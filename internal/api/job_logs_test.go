@@ -47,8 +47,14 @@ type fakeActions struct {
 	jobStatus  map[int64]string
 	logStatus  map[int64]int
 	logs       map[int64]string
+	bigLogs    map[int64]bigLog
 	blobAuth   []string
 	blobServer *httptest.Server
+}
+
+type bigLog struct {
+	bytes    int
+	declared bool
 }
 
 func (f *fakeActions) record(path string) {
@@ -112,8 +118,23 @@ func (f *fakeActions) serveBlob(w http.ResponseWriter, r *http.Request) {
 	sscanf(r.URL.Path, "/blob/%d", &id)
 	f.mu.Lock()
 	f.blobAuth = append(f.blobAuth, r.Header.Get("Authorization"))
+	size, sized := f.bigLogs[id]
 	f.mu.Unlock()
-	_, _ = w.Write([]byte(f.logs[id]))
+	if !sized {
+		_, _ = w.Write([]byte(f.logs[id]))
+		return
+	}
+	// A host that ignores Range: stream the whole log, with or without a
+	// declared length.
+	if size.declared {
+		w.Header().Set("Content-Length", strconv.Itoa(size.bytes))
+	}
+	chunk := []byte(strings.Repeat("linha de log repetida\n", 1<<12))
+	for sent := 0; sent < size.bytes; sent += len(chunk) {
+		if _, err := w.Write(chunk[:min(len(chunk), size.bytes-sent)]); err != nil {
+			return
+		}
+	}
 }
 
 // sscanf matches a path against a format with one %d segment.
@@ -134,7 +155,7 @@ func sscanf(path, format string, id *int64) bool {
 
 func jobLogFixture(t *testing.T) (http.Handler, *fakeActions, *http.Cookie) {
 	t.Helper()
-	fake := &fakeActions{jobStatus: map[int64]string{}, logStatus: map[int64]int{}, logs: map[int64]string{}}
+	fake := &fakeActions{jobStatus: map[int64]string{}, logStatus: map[int64]int{}, logs: map[int64]string{}, bigLogs: map[int64]bigLog{}}
 	api := httptest.NewServer(http.HandlerFunc(fake.serveAPI))
 	t.Cleanup(api.Close)
 	fake.blobServer = httptest.NewServer(http.HandlerFunc(fake.serveBlob))
@@ -296,5 +317,44 @@ func TestJobListOrdersActiveFirstAndBoundsCompletedRuns(t *testing.T) {
 	}
 	if after := fake.callCount("/repos/"); after != before {
 		t.Fatalf("job list not cached: %d GitHub calls", after-before)
+	}
+}
+
+func TestJobLogTooLargeIsTerminal(t *testing.T) {
+	h, fake, cookie := jobLogFixture(t)
+	const over = 32<<20 + 1
+	fake.jobStatus[40] = "in_progress"
+	fake.bigLogs[40] = bigLog{bytes: over, declared: true}
+	fake.jobStatus[41] = "in_progress"
+	fake.bigLogs[41] = bigLog{bytes: over}
+	fake.jobStatus[42] = "completed"
+	fake.bigLogs[42] = bigLog{bytes: over}
+	for _, id := range []int64{40, 41, 42} {
+		var body logResponse
+		if got := getJSON(t, h, fmt.Sprintf("/api/repos/heliowap/vpsdash/jobs/%d/log", id), cookie, &body); got != 200 {
+			t.Fatalf("job %d = %d, want 200 with a terminal state", id, got)
+		}
+		if body.Log.State != "too_large" || body.Log.Message == "" || body.Log.Text != "" {
+			t.Fatalf("job %d log = %+v", id, body.Log)
+		}
+		if body.PollAfterMS != 0 {
+			t.Fatalf("job %d keeps polling after too_large: poll_after_ms = %d", id, body.PollAfterMS)
+		}
+		if body.Complete != (id == 42) {
+			t.Fatalf("job %d complete = %v", id, body.Complete)
+		}
+	}
+}
+
+func TestJobLogWithinStreamBoundIsRead(t *testing.T) {
+	h, fake, cookie := jobLogFixture(t)
+	fake.jobStatus[43] = "in_progress"
+	fake.bigLogs[43] = bigLog{bytes: 1 << 20}
+	var body logResponse
+	if got := getJSON(t, h, "/api/repos/heliowap/vpsdash/jobs/43/log", cookie, &body); got != 200 {
+		t.Fatalf("log = %d", got)
+	}
+	if body.Log.State != "ok" || !body.Log.Truncated || body.Log.Size != 1<<20 || body.PollAfterMS != 5000 {
+		t.Fatalf("response = %+v", body)
 	}
 }

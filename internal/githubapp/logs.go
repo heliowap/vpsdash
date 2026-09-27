@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -20,6 +21,10 @@ const MaxLogTail = 64 << 10
 
 // maxLogStream bounds a download when the log host ignores the Range header.
 const maxLogStream = 32 << 20
+
+// logDownloadTimeout bounds the signed-URL download, so a slow log host
+// releases the caller's log slot well before the shared client timeout.
+var logDownloadTimeout = 10 * time.Second
 
 var (
 	ErrNotFound       = errors.New("GitHub resource not found")
@@ -130,6 +135,8 @@ func (c *Client) JobLogTail(ctx context.Context, repo string, jobID int64, maxBy
 	if err := c.checkLogLocation(location); err != nil {
 		return LogTail{}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, logDownloadTimeout)
+	defer cancel()
 	blob, err := http.NewRequestWithContext(ctx, "GET", location.String(), nil)
 	if err != nil {
 		return LogTail{}, err
@@ -193,6 +200,9 @@ func readLogTail(resp *http.Response, maxBytes int) (LogTail, error) {
 		return newLogTail(data, total, start > 0), nil
 	}
 	// The host ignored Range: keep only the end while streaming, within a bound.
+	if resp.ContentLength > maxLogStream {
+		return LogTail{}, ErrLogTooLarge
+	}
 	var tail []byte
 	var total int64
 	buf := make([]byte, 32<<10)

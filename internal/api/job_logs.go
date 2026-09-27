@@ -45,7 +45,7 @@ type jobList struct {
 }
 
 type logView struct {
-	State     string `json:"state"` // ok | pending | unavailable | expired
+	State     string `json:"state"` // ok | pending | unavailable | expired | too_large
 	Text      string `json:"text"`
 	Size      int64  `json:"size"`
 	Truncated bool   `json:"truncated"`
@@ -194,16 +194,17 @@ func (s *Server) jobLog(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, githubapp.ErrLogExpired):
 			view = logView{State: "expired", Message: "Log expirado ou removido pela retenção do GitHub."}
 		case errors.Is(err, githubapp.ErrLogTooLarge):
-			errorResponse(w, 502, "Log grande demais para ler aqui. Abra o job no GitHub.")
-			return
+			view = logView{State: "too_large", Message: "Log grande demais para ler aqui (mais de 32 MB). Abra o job no GitHub."}
 		default:
 			log.Printf("job log %s/%d: %v", repo, id, err)
 			errorResponse(w, 502, "Não foi possível ler o log no GitHub.")
 			return
 		}
 	}
+	// poll_after_ms 0 tells the client to stop. A log that is too large only
+	// grows, so it ends polling even while the job runs.
 	pollAfter := int64(0)
-	if !complete {
+	if !complete && view.State != "too_large" {
 		pollAfter = logPollInterval.Milliseconds()
 	}
 	jsonResponse(w, 200, map[string]any{"job": newJobView(repo, job, githubapp.WorkflowRun{}), "log": view, "complete": complete, "poll_after_ms": pollAfter, "observed_at": time.Now().Unix()})

@@ -13,4 +13,4 @@ export type RepoMinutes = { repo: string; collected_at: number; covered_since: n
 export type MinutesReport = { generated_at: number; collector_enabled: boolean; interval_s: number; repositories: RepoMinutes[] }
 export type Job = { repo: string; id: number; run_id: number; name: string; workflow?: string; run_title?: string; status: string; conclusion?: string; runner_name?: string; started_at?: number; completed_at?: number; html_url?: string }
 export type JobList = { jobs: Job[]; errors: Record<string, string>; observed_at: number }
-export type JobLog = { job: Job; log: { state: 'ok' | 'pending' | 'unavailable' | 'expired'; text: string; size: number; truncated: boolean; message?: string }; complete: boolean; poll_after_ms: number; observed_at: number }
+export type JobLog = { job: Job; log: { state: 'ok' | 'pending' | 'unavailable' | 'expired' | 'too_large'; text: string; size: number; truncated: boolean; message?: string }; complete: boolean; poll_after_ms: number; observed_at: number }

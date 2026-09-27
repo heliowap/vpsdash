@@ -544,11 +544,17 @@ function readableLog(text: string) {
   })
 }
 
+// Consecutive failed log reads before polling stops and waits for the operator.
+const maxLogFailures = 4
+
 function LogSheet({ job, onClose, onJob }: { job: Job; onClose: () => void; onJob: (job: Job) => void }) {
   const [result, setResult] = useState<JobLog | null>(null)
   const [error, setError] = useState('')
   const [hidden, setHidden] = useState(() => document.hidden)
-  const [stopped, setStopped] = useState(false)
+  // stop ends polling: `retry` offers a manual new read after failures.
+  const [stop, setStop] = useState<{ status: string; retry: boolean } | null>(null)
+  const [retryIn, setRetryIn] = useState(0)
+  const failures = useRef(0)
   const outputRef = useRef<HTMLPreElement>(null)
   const follow = useRef(true)
   const complete = result?.complete ?? false
@@ -560,7 +566,7 @@ function LogSheet({ job, onClose, onJob }: { job: Job; onClose: () => void; onJo
   }, [])
 
   useEffect(() => {
-    if (hidden || complete || stopped) return
+    if (hidden || complete || stop) return
     const controller = new AbortController()
     let timer = 0
     let active = true
@@ -568,18 +574,27 @@ function LogSheet({ job, onClose, onJob }: { job: Job; onClose: () => void; onJo
       try {
         const next = await api.jobLog(job.repo, job.id, controller.signal)
         if (!active) return
-        setResult(next); setError(''); onJob(next.job)
-        if (!next.complete) timer = window.setTimeout(poll, Math.max(2000, next.poll_after_ms || 5000))
+        failures.current = 0
+        setResult(next); setError(''); setRetryIn(0); onJob(next.job)
+        // poll_after_ms 0 is the server's stop signal (job done, or log too large).
+        if (next.poll_after_ms > 0) timer = window.setTimeout(poll, Math.max(2000, next.poll_after_ms))
+        else if (!next.complete) setStop({ status: 'Atualização encerrada.', retry: false })
       } catch (err) {
         if (!active || controller.signal.aborted) return
         setError(err instanceof Error ? err.message : 'Não foi possível ler o log.')
-        if (err instanceof ApiError && [400, 401, 404].includes(err.status)) { setStopped(true); return }
-        timer = window.setTimeout(poll, 10_000)
+        if (err instanceof ApiError && [400, 401, 404].includes(err.status)) { setStop({ status: 'Atualização interrompida.', retry: true }); return }
+        failures.current += 1
+        if (failures.current >= maxLogFailures) { setRetryIn(0); setStop({ status: `Atualização interrompida após ${maxLogFailures} falhas seguidas.`, retry: true }); return }
+        const delay = 10_000 * 2 ** (failures.current - 1)
+        setRetryIn(delay / 1000)
+        timer = window.setTimeout(poll, delay)
       }
     }
     void poll()
     return () => { active = false; controller.abort(); window.clearTimeout(timer) }
-  }, [job.repo, job.id, hidden, complete, stopped, onJob])
+  }, [job.repo, job.id, hidden, complete, stop, onJob])
+
+  const retry = () => { failures.current = 0; setError(''); setRetryIn(0); setStop(null) }
 
   const text = useMemo(() => readableLog(result?.log.text ?? ''), [result?.log.text])
   useLayoutEffect(() => {
@@ -590,7 +605,7 @@ function LogSheet({ job, onClose, onJob }: { job: Job; onClose: () => void; onJo
   const current = result?.job ?? job
   const state = jobState(current)
   const log = result?.log
-  const status = stopped ? 'Atualização interrompida.' : complete ? 'Job concluído. Atualização encerrada.' : hidden ? 'Atualização pausada enquanto o painel está em segundo plano.' : 'Atualizando a cada 5 s enquanto esta vista estiver aberta.'
+  const status = complete ? 'Job concluído. Atualização encerrada.' : stop ? stop.status : hidden ? 'Atualização pausada enquanto o painel está em segundo plano.' : retryIn ? `Leitura falhou. Nova tentativa em ${retryIn} s (${failures.current} de ${maxLogFailures - 1}).` : 'Atualizando a cada 5 s enquanto esta vista estiver aberta.'
   return <section className="log-sheet" aria-label={`Log do job ${current.name}`}>
     <header>
       <div><strong>Log · {current.name}</strong><small className="log-meta">{result ? `lido às ${clockTime(result.observed_at)}` : 'aguardando leitura'}{log?.state === 'ok' && log.size > 0 ? ` · ${byteSize(log.size)}` : ''}</small></div>
@@ -605,6 +620,7 @@ function LogSheet({ job, onClose, onJob }: { job: Job; onClose: () => void; onJo
       {text ? <pre className="log-output" ref={outputRef} tabIndex={0} aria-label="Fim do log" onScroll={event => { const el = event.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32 }}>{text}</pre> : <p className="log-placeholder">Log vazio até agora.</p>}
     </>}
     <div className="log-actions">
+      {stop?.retry && !complete && <button className="button button-small" type="button" onClick={retry}><RefreshCw size={15} />Tentar de novo</button>}
       {current.html_url && <a className="button button-small" href={current.html_url} target="_blank" rel="noreferrer">Abrir no GitHub<ArrowUpRight size={15} /></a>}
       <button className="button button-plain button-small" type="button" onClick={onClose}>Fechar log</button>
     </div>
