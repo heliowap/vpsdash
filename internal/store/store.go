@@ -153,6 +153,17 @@ CREATE TABLE minutes_cursor (
   repo TEXT PRIMARY KEY, collected_at INTEGER NOT NULL DEFAULT 0, covered_since INTEGER NOT NULL DEFAULT 0,
   attempted_at INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT ''
 );`,
+	`CREATE TABLE runner_unit_ops (
+  id INTEGER PRIMARY KEY,
+  host_id TEXT NOT NULL,
+  unit TEXT NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('restart','drain')),
+  status TEXT NOT NULL CHECK(status IN ('running','done','failed','cancelled','expired')),
+  detail TEXT NOT NULL DEFAULT '',
+  requested_at INTEGER NOT NULL,
+  finished_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_runner_unit_ops_unit ON runner_unit_ops(host_id, unit, id);`,
 }
 
 func migrate(db *sql.DB) error {
@@ -375,6 +386,7 @@ func (s *Store) PruneHistory(ctx context.Context, now time.Time) error {
 		// Scans outlive their jobs by two days: the runs listing filters by
 		// creation date, so a pruned scan must never be listed again.
 		{`DELETE FROM run_scans WHERE created_at < ?`, now.Add(-MinutesRetention - 48*time.Hour).Unix()},
+		{`DELETE FROM runner_unit_ops WHERE finished_at > 0 AND finished_at < ? AND id NOT IN (SELECT MAX(id) FROM runner_unit_ops GROUP BY host_id, unit)`, now.Add(-90 * 24 * time.Hour).Unix()},
 	})
 }
 

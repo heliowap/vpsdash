@@ -51,6 +51,12 @@ func IsRunnerUnitName(name string) bool {
 	return len(name) <= 255 && (name == "gh-agents-cleanup.timer" || runnerServiceName.MatchString(name))
 }
 
+// IsRunnerServiceName accepts only runner service units, which the panel may
+// restart or drain. The cleanup timer stays read-only.
+func IsRunnerServiceName(name string) bool {
+	return len(name) <= 255 && runnerServiceName.MatchString(name)
+}
+
 func (c Config) IsNativeRunnerUnit(hostID, name string) bool {
 	if !IsRunnerUnitName(name) {
 		return false

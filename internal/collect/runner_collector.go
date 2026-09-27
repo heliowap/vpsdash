@@ -54,12 +54,30 @@ func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units ma
 	if err != nil {
 		return err
 	}
+	ops, err := c.Store.LatestUnitOps(ctx)
+	if err != nil {
+		return err
+	}
+	drained := map[string]bool{}
+	for _, op := range ops {
+		if op.HostID == hostID && op.Drained() {
+			drained[op.Unit] = true
+		}
+	}
 	for _, unit := range units {
 		p, err := c.Store.UpsertNativeRunnerUnit(ctx, hostID, unit.Name)
 		if err != nil {
 			return err
 		}
 		detail := unit.LoadState + "/" + unit.ActiveState
+		if drained[unit.Name] && !unit.Healthy() {
+			// The operator stopped this unit on purpose: keep the reading,
+			// but do not turn the planned stop into a project_down alert.
+			if err := c.Store.RecordCheck(ctx, p.ID, false, detail+" (drenada pelo painel)", now); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := c.recordProjectCheck(ctx, p, unit.Healthy(), detail, now); err != nil {
 			return err
 		}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/netip"
@@ -88,6 +89,9 @@ func (s *Server) Handler() http.Handler {
 	private.HandleFunc("POST /api/presets/{name}", s.preset)
 	private.HandleFunc("GET /api/jobs", s.jobs)
 	private.HandleFunc("GET /api/repos/{owner}/{repo}/jobs/{job}/log", s.jobLog)
+	private.HandleFunc("POST /api/runner-units/{host}/{unit}/restart", s.runnerUnitOp("restart"))
+	private.HandleFunc("POST /api/runner-units/{host}/{unit}/drain", s.runnerUnitOp("drain"))
+	private.HandleFunc("POST /api/runner-units/{host}/{unit}/drain/cancel", s.cancelDrain)
 	private.HandleFunc("POST /api/logout", s.logout)
 	public.Handle("/api", s.authorize(private))
 	public.Handle("/api/", s.authorize(private))
@@ -364,7 +368,12 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	if !fleetAt.IsZero() {
 		fleetSeenAt = fleetAt.Unix()
 	}
-	jsonResponse(w, 200, map[string]any{"hosts": hosts, "projects": projects, "runners": runners, "sessions": sessions, "queued": queued, "repositories": repos, "collector_errors": errors, "fleet_seen_at": fleetSeenAt, "smtp_provisioned": s.SMTPProvisioned})
+	unitOps, err := s.Store.LatestUnitOps(ctx)
+	if err != nil {
+		errorResponse(w, 500, "Não foi possível ler as operações das units.")
+		return
+	}
+	jsonResponse(w, 200, map[string]any{"hosts": hosts, "projects": projects, "runners": runners, "sessions": sessions, "queued": queued, "repositories": repos, "collector_errors": errors, "fleet_seen_at": fleetSeenAt, "smtp_provisioned": s.SMTPProvisioned, "unit_ops": unitOps})
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
@@ -584,6 +593,43 @@ func (s *Server) preset(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonResponse(w, 200, map[string]any{"preset": r.PathValue("name"), "label": label, "results": results})
+}
+
+// runnerUnitOp starts a restart or drain of one gh-agents runner unit. The
+// request carries no body; host and unit come from the path and are checked
+// against the observed native units before anything reaches SSH.
+func (s *Server) runnerUnitOp(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Collector == nil {
+			errorResponse(w, 503, "Coletor indisponível.")
+			return
+		}
+		op, err := s.Collector.StartRunnerUnitOp(r.Context(), r.PathValue("host"), r.PathValue("unit"), action)
+		switch {
+		case err == nil:
+			log.Printf("runner unit %s accepted from %s: %s on %s", action, s.loginClientIP(r), op.Unit, op.HostID)
+			jsonResponse(w, http.StatusAccepted, op)
+		case errors.Is(err, collect.ErrUnknownRunnerUnit):
+			errorResponse(w, 404, "Unit de runner não encontrada neste host.")
+		case errors.Is(err, collect.ErrUnitOpRunning):
+			errorResponse(w, 409, "Já existe uma operação em andamento nesta unit.")
+		default:
+			log.Printf("runner unit %s: %v", action, err)
+			errorResponse(w, 500, "Não foi possível registrar a operação.")
+		}
+	}
+}
+
+func (s *Server) cancelDrain(w http.ResponseWriter, r *http.Request) {
+	if s.Collector == nil {
+		errorResponse(w, 503, "Coletor indisponível.")
+		return
+	}
+	if err := s.Collector.CancelDrain(r.PathValue("host"), r.PathValue("unit")); err != nil {
+		errorResponse(w, 409, "Nenhuma drenagem em andamento nesta unit.")
+		return
+	}
+	jsonResponse(w, http.StatusAccepted, map[string]bool{"cancelling": true})
 }
 
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {

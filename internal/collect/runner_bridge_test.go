@@ -81,7 +81,7 @@ func (h runnerBridgeHarness) run(t *testing.T, mode, command string) (string, in
 	if err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"-I", script, bridge, h.root}
+	args := []string{"-I", "-B", script, bridge, h.root}
 	if mode != "" {
 		args = append(args, mode)
 	}
