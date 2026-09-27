@@ -3,6 +3,7 @@ module github.com/heliowap/vpsdash
 go 1.27.1
 
 require (
+	github.com/coder/websocket v1.8.15
 	golang.org/x/crypto v0.57.0
 	golang.org/x/term v0.46.0
 	modernc.org/sqlite v1.59.0

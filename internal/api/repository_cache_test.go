@@ -97,7 +97,7 @@ func TestDashboardDoesNotWaitForGitHubVariables(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		w := httptest.NewRecorder()
-		s.dashboard(w, httptest.NewRequest("GET", "/api/dashboard", nil))
+		s.dashboard(w, httptest.NewRequest("GET", "/api/dashboard", nil), false)
 		done <- w.Code
 	}()
 	select {

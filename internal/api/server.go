@@ -23,6 +23,7 @@ import (
 	"github.com/heliowap/vpsdash/internal/collect"
 	"github.com/heliowap/vpsdash/internal/config"
 	"github.com/heliowap/vpsdash/internal/githubapp"
+	"github.com/heliowap/vpsdash/internal/interactive"
 	"github.com/heliowap/vpsdash/internal/store"
 	"github.com/heliowap/vpsdash/internal/webpush"
 )
@@ -61,6 +62,10 @@ type Server struct {
 	jobsMu         sync.Mutex
 	jobsCache      *jobList
 	logSlots       chan struct{}
+	// Interactive opens terminal, attach, and snippet SSH sessions with the
+	// per-host interactive key. Nil disables those features.
+	Interactive *interactive.Dialer
+	interactiveState
 }
 
 type staticAsset struct {
@@ -77,44 +82,65 @@ func New(cfg config.Config, s *store.Store, c *collect.Collector, gh GitHub, a *
 	return &Server{Config: cfg, Store: s, Collector: c, GitHub: gh, Auth: a, loginAttempts: map[string]*loginAttempts{}, loginSlots: make(chan struct{}, 2), logSlots: make(chan struct{}, concurrentLogs), verifyPassword: a.VerifyPassword, repoCache: map[string]*repoVariableCache{}}
 }
 
-func (s *Server) Handler() http.Handler {
-	public := http.NewServeMux()
-	public.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	public.HandleFunc("GET /api/session", s.session)
-	public.HandleFunc("POST /api/login", s.login)
-	private := http.NewServeMux()
-	private.HandleFunc("GET /api/dashboard", s.dashboard)
-	private.HandleFunc("GET /api/hosts/{id}/metrics", s.metrics)
-	private.HandleFunc("GET /api/minutes", s.minutes)
-	private.HandleFunc("GET /api/hosts/{id}/files", s.listFiles)
-	private.HandleFunc("GET /api/hosts/{id}/file", s.readFile)
-	private.HandleFunc("PATCH /api/projects/{id}", s.updateProject)
-	private.HandleFunc("GET /api/projects/{id}/incidents", s.projectIncidents)
-	private.HandleFunc("POST /api/repos/{owner}/{repo}/switch", s.switchRunner)
-	private.HandleFunc("POST /api/switches/bulk", s.bulkSwitch)
-	private.HandleFunc("POST /api/presets/{name}", s.preset)
-	private.HandleFunc("GET /api/jobs", s.jobs)
-	private.HandleFunc("GET /api/repos/{owner}/{repo}/jobs/{job}/log", s.jobLog)
-	private.HandleFunc("POST /api/runner-units/{host}/{unit}/restart", s.runnerUnitOp("restart"))
-	private.HandleFunc("POST /api/runner-units/{host}/{unit}/drain", s.runnerUnitOp("drain"))
-	private.HandleFunc("POST /api/runner-units/{host}/{unit}/drain/cancel", s.cancelDrain)
-	private.HandleFunc("POST /api/logout", s.logout)
-	private.HandleFunc("GET /api/push", s.pushStatus)
-	private.HandleFunc("POST /api/push/subscriptions", s.pushSubscribe)
-	private.HandleFunc("DELETE /api/push/subscriptions", s.pushUnsubscribe)
-	private.HandleFunc("POST /api/push/test", s.pushTest)
-	public.Handle("/api", s.authorize(private))
-	public.Handle("/api/", s.authorize(private))
-	public.HandleFunc("/", s.static)
-	return securityHeaders(public)
+// Handler serves the public listener: login, dashboard, and read-only
+// operations. Terminal, attach, and snippet routes are never registered here,
+// so they answer 404 even with a valid session.
+func (s *Server) Handler() http.Handler { return s.handler(false) }
+
+// PrivateHandler serves the private listener that only Tailscale Serve
+// reaches. It adds the interactive routes to everything Handler serves.
+func (s *Server) PrivateHandler() http.Handler { return s.handler(true) }
+
+func (s *Server) handler(privateRoute bool) http.Handler {
+	root := http.NewServeMux()
+	root.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	root.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) { s.session(w, r, privateRoute) })
+	root.HandleFunc("POST /api/login", s.login)
+	authenticated := http.NewServeMux()
+	authenticated.HandleFunc("GET /api/dashboard", func(w http.ResponseWriter, r *http.Request) { s.dashboard(w, r, privateRoute) })
+	authenticated.HandleFunc("GET /api/hosts/{id}/metrics", s.metrics)
+	authenticated.HandleFunc("GET /api/audit", s.audit)
+	authenticated.HandleFunc("PATCH /api/projects/{id}", s.updateProject)
+	authenticated.HandleFunc("POST /api/repos/{owner}/{repo}/switch", s.switchRunner)
+	authenticated.HandleFunc("POST /api/switches/bulk", s.bulkSwitch)
+	authenticated.HandleFunc("POST /api/presets/{name}", s.preset)
+	authenticated.HandleFunc("GET /api/minutes", s.minutes)
+	authenticated.HandleFunc("GET /api/hosts/{id}/files", s.listFiles)
+	authenticated.HandleFunc("GET /api/hosts/{id}/file", s.readFile)
+	authenticated.HandleFunc("GET /api/projects/{id}/incidents", s.projectIncidents)
+	authenticated.HandleFunc("GET /api/jobs", s.jobs)
+	authenticated.HandleFunc("GET /api/repos/{owner}/{repo}/jobs/{job}/log", s.jobLog)
+	authenticated.HandleFunc("POST /api/runner-units/{host}/{unit}/restart", s.runnerUnitOp("restart"))
+	authenticated.HandleFunc("POST /api/runner-units/{host}/{unit}/drain", s.runnerUnitOp("drain"))
+	authenticated.HandleFunc("POST /api/runner-units/{host}/{unit}/drain/cancel", s.cancelDrain)
+	authenticated.HandleFunc("GET /api/push", s.pushStatus)
+	authenticated.HandleFunc("POST /api/push/subscriptions", s.pushSubscribe)
+	authenticated.HandleFunc("DELETE /api/push/subscriptions", s.pushUnsubscribe)
+	authenticated.HandleFunc("POST /api/push/test", s.pushTest)
+	authenticated.HandleFunc("POST /api/logout", s.logout)
+	if privateRoute {
+		s.registerInteractive(authenticated)
+	}
+	root.Handle("/api", s.authorize(authenticated))
+	root.Handle("/api/", s.authorize(authenticated))
+	root.HandleFunc("/", s.static)
+	return securityHeaders(root, privateRoute)
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(next http.Handler, privateRoute bool) http.Handler {
+	// xterm.js writes its measured cell sizes and theme into <style>
+	// elements. Only the private listener, which serves the terminal, allows
+	// them; the public listener keeps style-src 'self'.
+	styleSource := "'self'"
+	if privateRoute {
+		styleSource = "'self' 'unsafe-inline'"
+	}
+	csp := "default-src 'self'; script-src 'self'; style-src " + styleSource + "; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", csp)
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
@@ -149,9 +175,11 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
 	return nil
 }
 
-func (s *Server) session(w http.ResponseWriter, r *http.Request) {
+func (s *Server) session(w http.ResponseWriter, r *http.Request, privateRoute bool) {
 	csrf, ok := s.Auth.Validate(r, time.Now())
-	jsonResponse(w, http.StatusOK, map[string]any{"authenticated": ok, "csrf": csrf})
+	// private reports which listener received the request. It comes from the
+	// handler that was mounted, never from request headers.
+	jsonResponse(w, http.StatusOK, map[string]any{"authenticated": ok, "csrf": csrf, "private": privateRoute})
 }
 
 func (s *Server) reserveLogin(ip string, now time.Time) bool {
@@ -322,6 +350,9 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if sid, ok := s.Auth.SessionID(r, time.Now()); ok {
+		s.clearStepUp(sid)
+	}
 	auth.Clear(w)
 	jsonResponse(w, http.StatusOK, map[string]bool{"authenticated": false})
 }
@@ -339,7 +370,7 @@ type repoView struct {
 	Error           string `json:"error,omitempty"`
 }
 
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
+func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, privateRoute bool) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	hosts, err := s.Store.Hosts(ctx)
@@ -391,7 +422,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	jsonResponse(w, 200, map[string]any{"hosts": hosts, "projects": projects, "runners": runners, "sessions": sessions, "queued": queued, "repositories": repos, "collector_errors": errors, "fleet_seen_at": fleetSeenAt, "smtp_provisioned": s.SMTPProvisioned, "unit_ops": unitOps, "file_roots": fileRoots})
+	jsonResponse(w, 200, map[string]any{"hosts": hosts, "projects": projects, "runners": runners, "sessions": sessions, "queued": queued, "repositories": repos, "collector_errors": errors, "fleet_seen_at": fleetSeenAt, "smtp_provisioned": s.SMTPProvisioned, "private": privateRoute, "unit_ops": unitOps, "file_roots": fileRoots})
 }
 
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
