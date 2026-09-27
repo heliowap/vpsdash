@@ -24,11 +24,19 @@ página Frota, cada unit de runner pode ser reiniciada ou drenada após
 confirmação (veja [Operar units de runner](#operar-units-de-runner)).
 
 O canal SMTP mostra "não provisionado" e mantém eventos pendentes enquanto
+<<<<<<< HEAD
 `smtp.env` não existir. Com `webpush.env`, cada dispositivo pode ativar
 notificações push na visão geral (§Web Push). A lista tmux detecta o agente e
 sugere seu estado (trabalhando, esperando input ou ociosa) a partir da tela e
 da CPU do pane entre duas leituras; o terminal web e o
 attach ficam para `v0.2`, conforme a especificação. A interface não afirma
+=======
+`smtp.env` não existir. A lista tmux detecta o agente. Pelo endereço
+privado da tailnet, a página Sessões abre um terminal web (xterm.js sobre
+WebSocket até um PTY SSH), o attach tmux somente leitura com um clique e os
+comandos fixos de cada host; veja [Terminal, attach e
+comandos](#terminal-attach-e-comandos-rota-privada). A interface não afirma
+>>>>>>> 4a91175 (docs: describe the private interactive contract)
 que um host está saudável antes da primeira leitura.
 
 A aba Arquivos navega e exibe, somente para leitura, as pastas listadas em
@@ -331,15 +339,19 @@ sudo -u vpsdash XDG_RUNTIME_DIR="/run/user/$vpsdash_uid" \
 ```
 
 Antes de publicar na tailnet, confira a configuração atual de Serve com
-`tailscale serve status`. O backend aceita somente loopback. Configure HTTPS
-privado para `127.0.0.1:8484` e verifique o domínio `*.ts.net` no navegador:
+`tailscale serve status`. O backend aceita somente loopback. O Serve deve
+apontar para o listener privado (`private_listen`, `127.0.0.1:8485` no
+exemplo), que é o único a servir terminal, attach e comandos. Configure HTTPS
+privado para ele e verifique o domínio `*.ts.net` no navegador:
 
 ```bash
-sudo tailscale serve --bg 127.0.0.1:8484
+sudo tailscale serve --bg 127.0.0.1:8485
 ```
 
+Se `private_listen` não estiver no inventário, o Serve pode continuar em
+`127.0.0.1:8484`, mas o painel fica somente leitura também pela tailnet.
 Se outro serviço já escutar na porta 443, use
-`sudo tailscale serve --https=8443 --bg 127.0.0.1:8484` e acesse
+`sudo tailscale serve --https=8443 --bg 127.0.0.1:8485` e acesse
 `https://<nome-do-host>.<tailnet>.ts.net:8443/`. O assistente escolhe essa
 porta automaticamente e aguarda a emissão inicial do certificado HTTPS.
 
@@ -389,6 +401,69 @@ curl -i https://app.example.com/api/dashboard
 
 A segunda chamada, sem cookie, deve retornar `401`. A rota Tailscale Serve
 pode coexistir com a pública; não use Tailscale Funnel para expor outra rota.
+O proxy público aponta **somente** para `listen` (`127.0.0.1:8484`); nunca
+para `private_listen`.
+
+### Terminal, attach e comandos (rota privada)
+
+O painel tem dois listeners em loopback. `listen` recebe o proxy público e
+serve login, leitura e o switch de runners. `private_listen` recebe apenas o
+Tailscale Serve e acrescenta as rotas interativas: `/api/step-up`,
+`/api/interactive`, `/api/terminal/tickets`, `/api/terminal/ws` e
+`/api/hosts/{id}/snippets/run`. Essas rotas não existem no mux público, que
+responde `404` mesmo com sessão válida; nenhum cabeçalho muda essa decisão.
+Pela rota pública, a página Sessões explica que o terminal só está disponível
+pelo endereço privado.
+
+Antes de abrir um terminal, um attach ou executar um comando, o painel pede a
+senha de novo. A confirmação vale 10 minutos, fica em memória ligada à
+sessão atual e conta nos mesmos limites de tentativas do login. O terminal
+abre por um ticket de uso único (30 s) obtido com CSRF e por um WebSocket
+cuja `Origin` precisa ser igual ao `Host`. São até quatro sessões
+interativas ao mesmo tempo; o terminal fecha após 15 minutos sem digitação.
+A tabela `audit_log` guarda hora, ação, host, alvo, IP do cliente e
+resultado de cada confirmação de senha, abertura, recusa, encerramento e
+comando, por 90 dias. Teclas e saídas nunca são gravadas; a página Sessões
+mostra os registros recentes.
+
+O attach usa `tmux attach-session -r -t =<sessão>` (somente leitura) e só
+aceita sessões observadas pela coleta naquele host. Assumir o controle é uma
+segunda opção, com confirmação. "Terminal local" mostra o comando `ssh`
+equivalente para colar no seu terminal, com a sua própria chave.
+
+O acesso interativo usa uma chave SSH por host, diferente de todas as chaves
+de coleta. A ponte `ssh-readonly.py` continua igual. Crie e autorize a chave
+para `helio` com `restrict,pty` (sem encaminhamento de porta, agente ou X11):
+
+```bash
+# host local, como helio ou com sudo
+scripts/setup-interactive-key.sh local
+# host remoto; fingerprint obtido no console do próprio host
+sudo scripts/setup-interactive-key.sh <host-id> <usuario-ssh> <fingerprint-SHA256>
+```
+
+O script confere a host key, não duplica a autorização, testa um login e
+mostra o campo a acrescentar ao host no inventário:
+
+```json
+"interactive_key_file": "/home/vpsdash/.ssh/id_ed25519_interactive_<host-id>",
+"snippets": [
+  { "name": "Uso de disco", "argv": ["df", "-h", "/"] },
+  { "name": "Units com falha", "argv": ["systemctl", "--failed", "--no-pager"], "timeout_seconds": 15 }
+]
+```
+
+Um host sem `interactive_key_file` não oferece terminal nem comandos. Os
+snippets são uma lista fixa: o painel envia só o nome, nunca argumentos. Cada
+palavra de `argv` vai entre aspas simples para o shell de login remoto
+(POSIX), então `$(...)`, `;`, `*` e `~` ficam literais. Cada execução tem
+timeout (30 s por padrão, até 300 s) e saída limitada a 64 KiB. `ssh_port`
+é opcional e vale para a coleta e o acesso interativo.
+
+Implantação: atualize o binário, acrescente `private_listen` e as chaves ao
+inventário, rode `check-config`, reinicie o serviço e aponte o Serve para
+`127.0.0.1:8485`. O assistente faz a troca do Serve se encontrar a rota
+antiga para `8484`.
 
 ## GitHub App `gh-agents-ops`
 

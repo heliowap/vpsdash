@@ -230,9 +230,15 @@ Rows present the subject first, then host or repository context, an observation 
 
 Each repository sheet groups the agent and CI backend rows. An individual switch reveals current and proposed values before confirmation, then reports the GitHub result in place. Bulk and preset operations use a pale preview panel listing each target and change, with Confirm and Cancel side by side where space allows. If GitHub did not confirm a current value, the preview says so and uses an explicit unknown-value confirmation label; a verified switch shows integration unavailable while its GitHub read is down.
 
+<<<<<<< HEAD
 ### File browser and viewer sheet
 
 Arquivos starts with the authorized roots as ruled rows (root path in Mono, host and "somente leitura" beneath). Inside a root, the host label and breadcrumbs lead; each crumb wraps rather than scrolling the page. Folder entries are ledger rows: name, then size and modification time in Mono. Folders come first. Entries the host refuses stay in the list with a lock, a muted name, the reason in words, and a "Bloqueado" stamp; they are not buttons and carry no size or time. A file opens in a bounded raised sheet: name and Mono measures in the header, state stamps ("Completo", "Truncado", "Binário", "Bloqueado"), and the text in Mono inside a region capped at `min(62vh, 640px)` that scrolls in both directions by itself, so the page never scrolls sideways. A truncated file says how much is shown and how much remains, with a control to load the next 512 KB beside "Voltar para a pasta".
+=======
+### Terminal, attach, and snippets
+
+On the private route, Sessions lists host access rows, tmux session rows, and the access ledger. "Ver sessão" (read-only attach) is the primary row action; "Assumir controle" is secondary and reveals an inline confirmation naming the session and host. Snippets show their fixed argv in Mono and open an operation preview before running; the result keeps exit code, duration, and truncation in words. Password step-up is a bounded sheet (bottom-anchored on a phone). The terminal is a floating sheet with the ink-colored xterm surface, a mode stamp (Shell, Somente leitura, Com controle), a written connection status, and the copyable local `ssh` command; it fills the screen at 720px and below. On the public route the same page states, in a preview-paper note, that these actions exist only at the private Tailscale address.
+>>>>>>> 4a91175 (docs: describe the private interactive contract)
 
 ### Login and transient states
 
