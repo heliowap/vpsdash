@@ -275,6 +275,9 @@ config["tailscale_serve_host"] = status["Self"]["DNSName"].rstrip(".")
 # The public Caddy route must overwrite X-Real-IP and X-Forwarded-For (README).
 # Serve supplies its own X-Forwarded-For, which the login handler reads first.
 config.setdefault("trust_proxy_header", True)
+# Tailscale Serve points to this second loopback listener; only it serves the
+# terminal, tmux attach, and snippets. The public proxy keeps using "listen".
+config.setdefault("private_listen", "127.0.0.1:8485")
 owner = pwd.getpwnam("vpsdash")
 with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as output:
     json.dump(config, output, indent=2)
@@ -618,8 +621,10 @@ if tailscale serve status --json | jq -e '(.AllowFunnel // {}) | any(.[])' >/dev
   exit 1
 fi
 self_dns="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')"
+# Serve must reach the private listener. The public proxy uses "listen".
+serve_backend="$(jq -er '(.private_listen // .listen) | strings' "$config_file")"
 panel_serve_port() {
-  tailscale serve status --json | jq -r --arg dns "$self_dns" --arg backend "http://$listen_addr" '
+  tailscale serve status --json | jq -r --arg dns "$self_dns" --arg backend "http://${1:-$serve_backend}" '
     [ . as $status
       | (.Web // {}) | to_entries[]
       | select(.key | startswith($dns + ":"))
@@ -631,8 +636,22 @@ panel_serve_port() {
 say "O serviço respondeu em loopback. Estado atual do Tailscale Serve:"
 tailscale serve status
 serve_port="$(panel_serve_port)"
+public_serve_port=""
+if [[ "$serve_backend" != "$listen_addr" ]]; then
+  public_serve_port="$(panel_serve_port "$listen_addr")"
+fi
 if [[ -n "$serve_port" ]]; then
   say "Serve já encaminha HTTPS na porta $serve_port para o painel."
+elif [[ -n "$public_serve_port" ]] && confirm "Serve encaminha a porta $public_serve_port ao listener público. Apontá-la para o listener privado $serve_backend (necessário para o terminal)?"; then
+  tailscale serve --https="$public_serve_port" --bg "$serve_backend"
+  serve_port="$(panel_serve_port)"
+  if [[ -z "$serve_port" ]]; then
+    wizard_error 'Serve não registrou a rota HTTPS para o listener privado.'
+    exit 1
+  fi
+elif [[ -n "$public_serve_port" ]]; then
+  serve_port="$public_serve_port"
+  pending "Serve ainda aponta para o listener público; terminal, attach e comandos ficam indisponíveis pela tailnet."
 elif confirm "Publicar o painel com Tailscale Serve HTTPS privado?"; then
   serve_port=443
   if ss -Hlt '( sport = :443 )' | grep -q .; then
@@ -643,7 +662,7 @@ elif confirm "Publicar o painel com Tailscale Serve HTTPS privado?"; then
     wizard_error "A porta $serve_port também está ocupada; libere-a antes de publicar o painel."
     exit 1
   fi
-  tailscale serve --https="$serve_port" --bg "$listen_addr"
+  tailscale serve --https="$serve_port" --bg "$serve_backend"
   serve_port="$(panel_serve_port)"
   if [[ -z "$serve_port" ]]; then
     wizard_error 'Serve não registrou a rota HTTPS para o painel.'
