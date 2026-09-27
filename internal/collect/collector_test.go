@@ -19,6 +19,26 @@ type fleetProbe struct {
 	runners []githubapp.Runner
 }
 
+type hostProbe struct{ calls map[string]int }
+
+func (p *hostProbe) Run(_ context.Context, _ config.Host, script string) (string, error) {
+	p.calls[script]++
+	switch script {
+	case MetricsScript:
+		return "malformed metrics", nil
+	case DiscoveryScript:
+		return "docker\tweb\tactive\n", nil
+	case SessionsScript:
+		return "session\t12\tsh\t/srv\n--PROCESSES--\n", nil
+	default:
+		return "", errors.New("unexpected script")
+	}
+}
+func (p *hostProbe) Check(context.Context, config.Host, string, string) (string, error) {
+	return "", nil
+}
+func (p *hostProbe) Close() {}
+
 func (f *fleetProbe) Runners(context.Context, string) ([]githubapp.Runner, error) {
 	if f.fail {
 		return nil, errors.New("GitHub unavailable")
@@ -86,6 +106,90 @@ func TestHostFailuresSurviveIdleTicks(t *testing.T) {
 	state.record(true, nil, now.Add(8*time.Minute))
 	if state.failures != 0 {
 		t.Fatalf("failures after recovery = %d", state.failures)
+	}
+}
+
+func TestMalformedMetricsDoNotStarveOtherHostCollectorsOrTripCircuit(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(filepath.Join(t.TempDir(), "vpsdash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	h := config.Host{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps"}
+	if err := s.UpsertHost(ctx, store.Host{ID: h.ID, TailnetName: h.TailnetName, Kind: h.Kind}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(config.Config{Hosts: []config.Host{h}}, s, nil)
+	probe := &hostProbe{calls: map[string]int{}}
+	c.Executor = probe
+	var state hostPollState
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		c.pollHost(ctx, h, now.Add(time.Duration(i)*time.Minute), &state)
+	}
+	if probe.calls[MetricsScript] != 3 || probe.calls[DiscoveryScript] != 1 || probe.calls[SessionsScript] != 3 {
+		t.Fatalf("host collectors starved after metrics parse failure: %+v", probe.calls)
+	}
+	_, errs, _ := c.Snapshot()
+	if errs["metrics:vps"] == "" || errs["host:vps"] != "" || errs["sessions:vps"] != "" {
+		t.Fatalf("collector errors were conflated: %+v", errs)
+	}
+	if state.circuit.failures != 0 || !state.circuit.openUntil.IsZero() {
+		t.Fatalf("parse error opened host circuit: %+v", state.circuit)
+	}
+	hosts, err := s.Hosts(ctx)
+	if err != nil || len(hosts) != 1 || !hosts[0].Online {
+		t.Fatalf("reachable host became offline: %+v, %v", hosts, err)
+	}
+	projects, err := s.Projects(ctx)
+	if err != nil || len(projects) != 1 || projects[0].Name != "web" {
+		t.Fatalf("discovery did not continue: %+v, %v", projects, err)
+	}
+	sessions, err := s.Sessions(ctx)
+	if err != nil || len(sessions) != 1 || sessions[0].Name != "session" {
+		t.Fatalf("sessions did not continue: %+v, %v", sessions, err)
+	}
+}
+
+func TestProjectSweepDoesNotBlockHostMetricsLock(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "vpsdash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	h := config.Host{ID: "vps", TailnetName: "127.0.0.1", Kind: "vps"}
+	if err := st.UpsertHost(ctx, store.Host{ID: h.ID, TailnetName: h.TailnetName, Kind: h.Kind}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCandidate(ctx, h.ID, "web", "docker"); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := st.Projects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("projects = %+v, %v", projects, err)
+	}
+	if err := st.SetMonitored(ctx, projects[0].ID, true, server.URL, ""); err != nil {
+		t.Fatal(err)
+	}
+	projects, err = st.Projects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New(config.Config{Hosts: []config.Host{h}}, st, nil)
+	defer c.Close()
+	lock := c.hostLocks[h.ID]
+	lock.Lock()
+	defer lock.Unlock()
+	done := make(chan struct{})
+	go func() { c.checkProjects(ctx, projects); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("project sweep waited for the host metrics lock")
 	}
 }
 

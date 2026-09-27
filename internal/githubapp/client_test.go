@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testClient(t *testing.T, handler http.HandlerFunc) *Client {
@@ -38,6 +39,42 @@ func TestNilClientReturnsErrorInsteadOfPanicking(t *testing.T) {
 	}
 	if err := client.SetVariable(context.Background(), "heliowap/vpsdash", "AGENT_RUNNER", "ubuntu-latest"); err == nil {
 		t.Fatal("nil client changed a GitHub variable")
+	}
+}
+
+func TestSlowTokenFetchDoesNotBlockOtherInstallation(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/app/installations/7/access_tokens" {
+			close(started)
+			<-release
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"token":"installation-token","expires_at":"2030-01-01T00:00:00Z"}`))
+	})
+	c.installations["other"] = 8
+	first := make(chan error, 1)
+	go func() { _, err := c.token(context.Background(), "heliowap"); first <- err }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first token request did not start")
+	}
+	second := make(chan error, 1)
+	go func() { _, err := c.token(context.Background(), "other"); second <- err }()
+	select {
+	case err := <-second:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("another owner's token request waited behind the slow request")
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
 	}
 }
 

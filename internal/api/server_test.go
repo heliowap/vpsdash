@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -143,7 +144,7 @@ func TestLoginRateLimitSeparatesClientsBehindLocalProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(config.Config{}, nil, nil, nil, a).Handler()
+	h := New(config.Config{TrustProxyHeader: true}, nil, nil, nil, a).Handler()
 	request := func(clientIP string) int {
 		r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"wrong"}`))
 		r.RemoteAddr = "127.0.0.1:12345"
@@ -174,7 +175,7 @@ func TestLoginRateLimitIgnoresUntrustedProxyHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(config.Config{}, nil, nil, nil, a).Handler()
+	h := New(config.Config{TrustProxyHeader: true}, nil, nil, nil, a).Handler()
 	for i := 0; i < 6; i++ {
 		r := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"password":"wrong"}`))
 		r.RemoteAddr = "198.51.100.10:12345"
@@ -188,6 +189,47 @@ func TestLoginRateLimitIgnoresUntrustedProxyHeader(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("attempt %d: status %d, want %d", i+1, w.Code, want)
 		}
+	}
+}
+
+func TestLoginRejectsSpoofedLoopbackHeaderAndGlobalSpray(t *testing.T) {
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := auth.New(hash, []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(config.Config{}, nil, nil, nil, a).Handler()
+	for i := 0; i < 6; i++ {
+		r := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"password":"wrong"}`))
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("X-Real-IP", "203.0.113."+strconv.Itoa(i+1))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		want := http.StatusUnauthorized
+		if i == 5 {
+			want = http.StatusTooManyRequests
+		}
+		if w.Code != want {
+			t.Fatalf("spoofed attempt %d = %d, want %d", i+1, w.Code, want)
+		}
+	}
+	s := New(config.Config{TrustProxyHeader: true}, nil, nil, nil, a)
+	now := time.Now()
+	for i := 0; i < 20; i++ {
+		ip := "198.51.100." + strconv.Itoa(i+1)
+		if !s.reserveLogin(ip, now) {
+			t.Fatalf("global attempt %d was refused", i+1)
+		}
+		s.finishLogin(ip, false, now)
+	}
+	if s.reserveLogin("203.0.113.200", now) {
+		t.Fatal("global failure budget was bypassed by changing client IP")
+	}
+	if !s.reserveLogin("203.0.113.200", now.Add(6*time.Minute)) {
+		t.Fatal("expired global failures still block login")
 	}
 }
 
@@ -279,14 +321,19 @@ func TestLoginBoundsConcurrentPasswordVerification(t *testing.T) {
 
 func TestEmbeddedPWAAssets(t *testing.T) {
 	h := (&Server{Static: http.FS(web.Dist())}).Handler()
+	assets, err := fs.Glob(web.Dist(), "assets/*.js")
+	if err != nil || len(assets) == 0 {
+		t.Fatalf("embedded JS assets = %v, %v", assets, err)
+	}
 	for _, tc := range []struct {
 		path, contentType, cacheControl string
 	}{
 		{"/", "text/html", "no-cache"},
 		{"/manifest.webmanifest", "application/manifest+json", "no-cache"},
 		{"/sw.js", "text/javascript", "no-cache"},
-		{"/icons/vpsdash-192.png", "image/png", ""},
-		{"/icons/vpsdash-512.png", "image/png", ""},
+		{"/icons/vpsdash-192.png", "image/png", "public, max-age=3600"},
+		{"/icons/vpsdash-512.png", "image/png", "public, max-age=3600"},
+		{"/" + assets[0], "text/javascript", "public, max-age=31536000, immutable"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -300,10 +347,25 @@ func TestEmbeddedPWAAssets(t *testing.T) {
 			if got := w.Header().Get("Cache-Control"); got != tc.cacheControl {
 				t.Fatalf("cache control = %q", got)
 			}
+			if etag := w.Header().Get("ETag"); etag == "" {
+				t.Fatal("asset has no ETag")
+			}
 			if tc.contentType == "image/png" && !bytes.HasPrefix(w.Body.Bytes(), []byte("\x89PNG\r\n\x1a\n")) {
 				t.Fatal("embedded icon is not a PNG")
 			}
 		})
+	}
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/icons/vpsdash-192.png", nil))
+	if first.Header().Get("Strict-Transport-Security") != "max-age=31536000" || strings.Contains(first.Header().Get("Content-Security-Policy"), "unsafe-inline") {
+		t.Fatal("public security headers are too permissive")
+	}
+	revalidated := httptest.NewRequest(http.MethodGet, "/icons/vpsdash-192.png", nil)
+	revalidated.Header.Set("If-None-Match", first.Header().Get("ETag"))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, revalidated)
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("icon revalidation = %d", w.Code)
 	}
 }
 
@@ -323,12 +385,20 @@ func TestPublicHandlerLimitsBodiesAndMethods(t *testing.T) {
 		{http.MethodPost, "/api/login", `{"password":"wrong"}{"password":"again"}`, http.StatusBadRequest},
 		{http.MethodPost, "/missing", "", http.StatusMethodNotAllowed},
 		{http.MethodGet, "/api", "", http.StatusUnauthorized},
+		{http.MethodGet, "/assets/old-hash.js", "", http.StatusNotFound},
 	} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
 		if w.Code != tc.want {
 			t.Fatalf("%s %s = %d, want %d", tc.method, tc.path, w.Code, tc.want)
 		}
+	}
+	navigation := httptest.NewRequest(http.MethodGet, "/projects", nil)
+	navigation.Header.Set("Accept", "text/html")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, navigation)
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("SPA navigation = %d, %q", w.Code, w.Header().Get("Content-Type"))
 	}
 }
 

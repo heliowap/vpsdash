@@ -1,10 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -35,9 +38,13 @@ type Server struct {
 	SMTPProvisioned bool
 	loginMu         sync.Mutex
 	loginAttempts   map[string]*loginAttempts
+	globalFailures  []time.Time
+	globalPending   int
 	lastLoginPrune  time.Time
 	loginSlots      chan struct{}
 	verifyPassword  func(string) bool
+	repoMu          sync.Mutex
+	repoCache       map[string]*repoVariableCache
 }
 
 type loginAttempts struct {
@@ -46,7 +53,7 @@ type loginAttempts struct {
 }
 
 func New(cfg config.Config, s *store.Store, c *collect.Collector, gh GitHub, a *auth.Authenticator) *Server {
-	return &Server{Config: cfg, Store: s, Collector: c, GitHub: gh, Auth: a, loginAttempts: map[string]*loginAttempts{}, loginSlots: make(chan struct{}, 2), verifyPassword: a.VerifyPassword}
+	return &Server{Config: cfg, Store: s, Collector: c, GitHub: gh, Auth: a, loginAttempts: map[string]*loginAttempts{}, loginSlots: make(chan struct{}, 2), verifyPassword: a.VerifyPassword, repoCache: map[string]*repoVariableCache{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -73,7 +80,8 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}
@@ -116,6 +124,16 @@ func (s *Server) reserveLogin(ip string, now time.Time) bool {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	cutoff := now.Add(-5 * time.Minute)
+	recentGlobal := s.globalFailures[:0]
+	for _, t := range s.globalFailures {
+		if t.After(cutoff) {
+			recentGlobal = append(recentGlobal, t)
+		}
+	}
+	s.globalFailures = recentGlobal
+	if len(recentGlobal)+s.globalPending >= 20 {
+		return false
+	}
 	if now.Sub(s.lastLoginPrune) >= time.Minute {
 		for key, attempts := range s.loginAttempts {
 			recent := attempts.failures[:0]
@@ -147,6 +165,7 @@ func (s *Server) reserveLogin(ip string, now time.Time) bool {
 		return false
 	}
 	attempts.pending++
+	s.globalPending++
 	return true
 }
 
@@ -155,10 +174,12 @@ func (s *Server) finishLogin(ip string, success bool, now time.Time) {
 	defer s.loginMu.Unlock()
 	attempts := s.loginAttempts[ip]
 	attempts.pending--
+	s.globalPending--
 	if success {
 		attempts.failures = nil
 	} else {
 		attempts.failures = append(attempts.failures, now)
+		s.globalFailures = append(s.globalFailures, now)
 	}
 	if attempts.pending == 0 && len(attempts.failures) == 0 {
 		delete(s.loginAttempts, ip)
@@ -180,7 +201,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente em instantes.")
 		return
 	}
-	ip := loginClientIP(r)
+	ip := loginClientIP(r, s.Config.TrustProxyHeader)
 	if !s.reserveLogin(ip, time.Now()) {
 		errorResponse(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente em cinco minutos.")
 		return
@@ -199,13 +220,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"authenticated": true, "csrf": csrf})
 }
 
-func loginClientIP(r *http.Request) string {
+func loginClientIP(r *http.Request, trustProxyHeader bool) string {
 	ip := r.RemoteAddr
 	if host, _, err := net.SplitHostPort(ip); err == nil {
 		ip = host
 	}
-	// The public Caddy proxy overwrites X-Real-IP before forwarding to loopback.
-	if remote := net.ParseIP(ip); remote != nil && remote.IsLoopback() {
+	// A loopback peer alone cannot identify which proxy supplied the header.
+	if remote := net.ParseIP(ip); trustProxyHeader && remote != nil && remote.IsLoopback() {
 		if forwarded := net.ParseIP(r.Header.Get("X-Real-IP")); forwarded != nil {
 			return forwarded.String()
 		}
@@ -243,7 +264,8 @@ type repoView struct {
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 	hosts, err := s.Store.Hosts(ctx)
 	if err != nil {
 		errorResponse(w, 500, "Não foi possível ler os hosts.")
@@ -273,17 +295,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	repos := make([]repoView, 0, len(s.Config.Repositories))
 	for _, cfg := range s.Config.Repositories {
 		view := repoView{Name: cfg.Name, AgentSwitchable: cfg.AgentSwitchable, CISwitchable: cfg.CISwitchable}
-		if s.GitHub != nil {
-			view.AgentRunner, err = s.GitHub.Variable(ctx, cfg.Name, "AGENT_RUNNER")
-			if err == nil {
-				view.CIRunner, err = s.GitHub.Variable(ctx, cfg.Name, "CI_RUNNER")
-			}
-			if err != nil {
-				view.Error = "GitHub indisponível"
-			}
-		} else {
-			view.Error = "GitHub App não provisionado"
-		}
+		view.AgentRunner, view.CIRunner, view.Error = s.repositoryVariables(cfg.Name)
 		repos = append(repos, view)
 	}
 	fleetSeenAt := int64(0)
@@ -402,6 +414,7 @@ func (s *Server) switchRunner(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, 502, "GitHub recusou a troca de runner.")
 		return
 	}
+	s.noteVariableSet(repo, body.Variable, body.Label)
 	jsonResponse(w, 200, map[string]any{"repo": repo, "variable": body.Variable, "label": body.Label})
 }
 
@@ -431,6 +444,7 @@ func (s *Server) bulkSwitch(w http.ResponseWriter, r *http.Request) {
 			results[repo] = "falhou"
 		} else {
 			results[repo] = "ok"
+			s.noteVariableSet(repo, body.Variable, body.Label)
 		}
 	}
 	jsonResponse(w, 200, map[string]any{"results": results})
@@ -458,6 +472,7 @@ func (s *Server) preset(w http.ResponseWriter, r *http.Request) {
 				results[key] = "falhou"
 			} else {
 				results[key] = "ok"
+				s.noteVariableSet(repo.Name, variable, label)
 			}
 		}
 	}
@@ -480,6 +495,10 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := s.Static.Open(path)
 	if err != nil {
+		if !strings.Contains(r.Header.Get("Accept"), "text/html") || strings.Contains(path, ".") || strings.HasPrefix(path, "assets/") || strings.HasPrefix(path, "icons/") {
+			http.NotFound(w, r)
+			return
+		}
 		f, err = s.Static.Open("index.html")
 		if err != nil {
 			http.NotFound(w, r)
@@ -488,6 +507,11 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 		path = "index.html"
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
 	data, err := io.ReadAll(f)
 	if err != nil {
 		errorResponse(w, 500, "Arquivo indisponível.")
@@ -513,6 +537,11 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "index.html" || path == "sw.js" || strings.HasSuffix(path, ".webmanifest") {
 		w.Header().Set("Cache-Control", "no-cache")
+	} else if strings.HasPrefix(path, "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else if strings.HasPrefix(path, "icons/") {
+		w.Header().Set("Cache-Control", "public, max-age=3600")
 	}
-	_, _ = w.Write(data)
+	w.Header().Set("ETag", fmt.Sprintf("\"%x\"", sha256.Sum256(data)))
+	http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(data))
 }

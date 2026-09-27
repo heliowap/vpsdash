@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,6 +50,32 @@ func TestMigrationsAndCandidatePromotion(t *testing.T) {
 	}
 	if got, err := s.ConsecutiveFailures(ctx, projects[0].ID); err != nil || got != 1 {
 		t.Fatalf("failures = %d, %v", got, err)
+	}
+}
+
+func TestConsecutiveFailuresUsesBoundedIndexScan(t *testing.T) {
+	s := newTestStore(t)
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN SELECT ok FROM checks WHERE project_id=? ORDER BY ts DESC,rowid DESC LIMIT 3`, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	indexed := false
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(detail, "idx_checks_proj_ts") {
+			indexed = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !indexed {
+		t.Fatal("latest-three failure check did not use the project/time index")
 	}
 }
 

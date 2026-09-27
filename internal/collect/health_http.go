@@ -21,6 +21,7 @@ type healthPolicy struct {
 }
 
 var errHealthURLDenied = errors.New("health URL targets an unapproved address")
+var errHealthDNSUnavailable = errors.New("health URL host could not be resolved")
 
 var nonPublicRanges = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"),
@@ -76,8 +77,11 @@ func (p *healthPolicy) allowedIP(host string, ip net.IP) bool {
 func (p *healthPolicy) allowedAddresses(ctx context.Context, host string) ([]net.IPAddr, error) {
 	host = normalizedHost(host)
 	addresses, err := p.addresses(ctx, host)
-	if err != nil || len(addresses) == 0 {
-		return nil, errors.New("health URL host could not be resolved")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errHealthDNSUnavailable, err)
+	}
+	if len(addresses) == 0 {
+		return nil, errHealthDNSUnavailable
 	}
 	for _, address := range addresses {
 		if !p.allowedIP(host, address.IP) {
@@ -110,14 +114,27 @@ func (p *healthPolicy) validate(ctx context.Context, raw string) error {
 	return err
 }
 
-// ValidateHealthURL applies the same destination policy when a project is
-// saved and when the collector later opens a connection.
+// ValidateHealthURL rejects malformed or known-unapproved destinations at
+// save time. DNS failures are retried by the collector at probe time.
 func ValidateHealthURL(ctx context.Context, hosts []config.Host, raw string) error {
-	return newHealthPolicy(hosts).validate(ctx, raw)
+	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	return newHealthPolicy(hosts).validateForSave(lookupCtx, raw)
+}
+
+func (p *healthPolicy) validateForSave(ctx context.Context, raw string) error {
+	err := p.validate(ctx, raw)
+	if errors.Is(err, errHealthDNSUnavailable) {
+		return nil // The probe rechecks the destination when DNS is available.
+	}
+	return err
 }
 
 func newHealthHTTPClient(hosts []config.Host) *http.Client {
-	policy := newHealthPolicy(hosts)
+	return newHealthHTTPClientWithPolicy(newHealthPolicy(hosts))
+}
+
+func newHealthHTTPClientWithPolicy(policy *healthPolicy) *http.Client {
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
 		MaxIdleConns:    16,
@@ -145,7 +162,7 @@ func newHealthHTTPClient(hosts []config.Host) *http.Client {
 		Timeout:   10 * time.Second,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 || len(via) > 0 && normalizedHost(req.URL.Hostname()) != normalizedHost(via[0].URL.Hostname()) {
+			if len(via) >= 5 || (len(via) > 0 && normalizedHost(req.URL.Hostname()) != normalizedHost(via[0].URL.Hostname())) {
 				return fmt.Errorf("%w: redirect changed host or exceeded limit", errHealthURLDenied)
 			}
 			return policy.validate(req.Context(), req.URL.String())

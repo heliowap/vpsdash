@@ -35,11 +35,12 @@ type RunnerUnitHost struct {
 }
 
 type Config struct {
-	Listen          string           `json:"listen"`
-	Database        string           `json:"database"`
-	Hosts           []Host           `json:"hosts"`
-	RunnerUnitHosts []RunnerUnitHost `json:"runner_unit_hosts,omitempty"`
-	Repositories    []Repository     `json:"repositories"`
+	Listen           string           `json:"listen"`
+	Database         string           `json:"database"`
+	TrustProxyHeader bool             `json:"trust_proxy_header,omitempty"`
+	Hosts            []Host           `json:"hosts"`
+	RunnerUnitHosts  []RunnerUnitHost `json:"runner_unit_hosts,omitempty"`
+	Repositories     []Repository     `json:"repositories"`
 }
 
 var safeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)

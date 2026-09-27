@@ -61,3 +61,17 @@ func TestHealthProbeBlocksRedirectToOtherHost(t *testing.T) {
 		t.Fatalf("loopback URL was accepted at save: %v", err)
 	}
 }
+
+func TestUnresolvedHealthHostCanBeSavedButDoesNotRecordOutage(t *testing.T) {
+	p := newHealthPolicy(nil)
+	p.lookup = func(context.Context, string) ([]net.IPAddr, error) {
+		return nil, errors.New("temporary DNS outage")
+	}
+	if err := p.validateForSave(context.Background(), "https://pending.example.com/health"); err != nil {
+		t.Fatalf("well-formed unresolved URL rejected at save: %v", err)
+	}
+	client := newHealthHTTPClientWithPolicy(p)
+	if _, _, err := checkHTTP(context.Background(), client, "https://pending.example.com/health"); !errors.Is(err, errHealthDNSUnavailable) {
+		t.Fatalf("DNS outage was recorded as a project failure: %v", err)
+	}
+}

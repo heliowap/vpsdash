@@ -135,7 +135,9 @@ CREATE TABLE alerts (
 | runners/fila GitHub | 30 s | REST via App (`/actions/runners`, `queued`) | burst de 10 s enquanto `busy` |
 
 Polling é sequencial por host e paralelo entre hosts (um worker por host,
-timeout SSH 10 s, circuit-breaker: 3 falhas → host `unreachable` por 5 min).
+timeout SSH 10 s, circuit-breaker: 3 falhas de comando SSH → host
+`unreachable` por 5 min; erros de parsing e armazenamento ficam no coletor
+específico e não derrubam a presença do host).
 
 ### Retenção
 

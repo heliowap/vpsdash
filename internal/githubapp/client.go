@@ -30,6 +30,7 @@ type Client struct {
 	http          *http.Client
 	mu            sync.Mutex
 	tokens        map[string]cachedToken
+	tokenFlights  map[string]*tokenFlight
 }
 
 //go:embed api-version.txt
@@ -38,6 +39,12 @@ var apiVersion string
 type cachedToken struct {
 	value string
 	until time.Time
+}
+
+type tokenFlight struct {
+	done  chan struct{}
+	value string
+	err   error
 }
 
 type Runner struct {
@@ -95,7 +102,7 @@ func New(appID int64, keyPEM []byte, installations map[string]int64, baseURL str
 	if baseURL == "" {
 		baseURL = "https://api.github.com"
 	}
-	return &Client{appID: appID, key: key, installations: installations, baseURL: strings.TrimSuffix(baseURL, "/"), http: httpClient, tokens: map[string]cachedToken{}}, nil
+	return &Client{appID: appID, key: key, installations: installations, baseURL: strings.TrimSuffix(baseURL, "/"), http: httpClient, tokens: map[string]cachedToken{}, tokenFlights: map[string]*tokenFlight{}}, nil
 }
 
 func (c *Client) appJWT(now time.Time) (string, error) {
@@ -154,13 +161,39 @@ func (c *Client) token(ctx context.Context, owner string) (string, error) {
 		return "", fmt.Errorf("GitHub App is not installed for %s", owner)
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if cached, ok := c.tokens[owner]; ok && time.Now().Before(cached.until) {
+		c.mu.Unlock()
 		return cached.value, nil
 	}
+	if flight := c.tokenFlights[owner]; flight != nil {
+		c.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-flight.done:
+			return flight.value, flight.err
+		}
+	}
+	flight := &tokenFlight{done: make(chan struct{})}
+	c.tokenFlights[owner] = flight
+	c.mu.Unlock()
+
+	value, until, err := c.fetchToken(ctx, id)
+	c.mu.Lock()
+	if err == nil {
+		c.tokens[owner] = cachedToken{value: value, until: until}
+	}
+	flight.value, flight.err = value, err
+	delete(c.tokenFlights, owner)
+	close(flight.done)
+	c.mu.Unlock()
+	return value, err
+}
+
+func (c *Client) fetchToken(ctx context.Context, id int64) (string, time.Time, error) {
 	jwt, err := c.appJWT(time.Now())
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	var result struct {
 		Token     string    `json:"token"`
@@ -168,17 +201,16 @@ func (c *Client) token(ctx context.Context, owner string) (string, error) {
 	}
 	_, err = c.request(ctx, "POST", fmt.Sprintf("/app/installations/%d/access_tokens", id), jwt, map[string]any{}, &result)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	if result.Token == "" {
-		return "", errors.New("GitHub returned an empty installation token")
+		return "", time.Time{}, errors.New("GitHub returned an empty installation token")
 	}
 	until := time.Now().Add(50 * time.Minute)
 	if limit := result.ExpiresAt.Add(-5 * time.Minute); !result.ExpiresAt.IsZero() && limit.Before(until) {
 		until = limit
 	}
-	c.tokens[owner] = cachedToken{value: result.Token, until: until}
-	return result.Token, nil
+	return result.Token, until, nil
 }
 
 func (c *Client) repoToken(ctx context.Context, repo string) (string, error) {

@@ -109,6 +109,7 @@ CREATE TABLE alerts (
 );
 CREATE INDEX idx_alerts_pending ON alerts(channel, sent_at);`,
 	`ALTER TABLE projects ADD COLUMN native INTEGER NOT NULL DEFAULT 0 CHECK(native IN (0,1));`,
+	`CREATE INDEX idx_runners_seen_at ON runners(seen_at);`,
 }
 
 func migrate(db *sql.DB) error {
@@ -288,6 +289,7 @@ func (s *Store) RecordCheck(ctx context.Context, id int64, ok bool, detail strin
 }
 
 func (s *Store) ConsecutiveFailures(ctx context.Context, id int64) (int, error) {
+	// idx_checks_proj_ts lets SQLite read only the three newest rows for this project.
 	rows, err := s.db.QueryContext(ctx, `SELECT ok FROM checks WHERE project_id=? ORDER BY ts DESC,rowid DESC LIMIT 3`, id)
 	if err != nil {
 		return 0, err
@@ -312,7 +314,7 @@ type pruneQuery struct {
 	cutoff int64
 }
 
-func (s *Store) PruneCurrent(ctx context.Context, now time.Time) error {
+func (s *Store) PruneRunners(ctx context.Context, now time.Time) error {
 	cutoff := now.Add(-10 * time.Minute).Unix()
 	return s.prune(ctx, []pruneQuery{
 		{`DELETE FROM runners WHERE seen_at < ?`, cutoff},

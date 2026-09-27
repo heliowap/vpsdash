@@ -22,7 +22,7 @@ func TestRunnerExpiresButLastSessionAndUnsentAlertPersist(t *testing.T) {
 	if err := s.QueueAlert(ctx, "runner_offline", "agent-1", "runner offline"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PruneCurrent(ctx, at.Add(9*time.Minute)); err != nil {
+	if err := s.PruneRunners(ctx, at.Add(9*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if runners, err := s.Runners(ctx); err != nil || len(runners) != 1 {
@@ -31,7 +31,7 @@ func TestRunnerExpiresButLastSessionAndUnsentAlertPersist(t *testing.T) {
 	if sessions, err := s.Sessions(ctx); err != nil || len(sessions) != 1 {
 		t.Fatalf("recent sessions = %+v, %v", sessions, err)
 	}
-	if err := s.PruneCurrent(ctx, at.Add(11*time.Minute)); err != nil {
+	if err := s.PruneRunners(ctx, at.Add(11*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	runners, err := s.Runners(ctx)

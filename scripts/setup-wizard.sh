@@ -259,6 +259,7 @@ for host in config["hosts"]:
     if host["id"] != local_host_id and host["kind"] == "vps":
         if sample_name or not pathlib.Path(host.get("ssh_key_file", "")).is_file():
             host["kind"] = "presence"
+            host.pop("ssh_user", None)
             # Keep the planned key path so another wizard run can offer SSH setup.
 owner = pwd.getpwnam("vpsdash")
 with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as output:
@@ -332,7 +333,7 @@ stage "Coletores locais"
 say "Instala chaves separadas e comandos SSH restritos para helio e gh-agents."
 local_host_id="$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].split(".")[0])')"
 mapfile -t planned_remote_hosts < <(jq -r --arg local "$local_host_id" --slurpfile sample "$repo_dir/config.example.json" '
-  ($sample[0].hosts | map(select(.kind == "vps") | .id)) as $sample_vps
+  ($sample[0].hosts | map(select(.kind == "vps" or (.ssh_key_file // "") != "") | .id)) as $sample_vps
   | .hosts[]
   | select(.id != $local and (.kind == "vps" or (.ssh_key_file // "") != "" or (.id as $id | $sample_vps | index($id))))
   | .id
@@ -491,7 +492,7 @@ else
   ask SMTP_HOST "Nome DNS com certificado TLS válido do servidor SMTP:"
   ask SMTP_PORT "Porta SMTP [587; ou 465 para TLS implícito]:"
   SMTP_PORT="${SMTP_PORT:-587}"
-  if [[ ! "$SMTP_HOST" =~ ^[A-Za-z0-9.-]+$ || "$SMTP_PORT" != 587 && "$SMTP_PORT" != 465 ]]; then
+  if [[ ! "$SMTP_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || [[ "$SMTP_PORT" != 587 && "$SMTP_PORT" != 465 ]]; then
     echo 'Host ou porta SMTP inválido.' >&2
     exit 1
   fi

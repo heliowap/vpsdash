@@ -24,10 +24,18 @@ type FleetAPI interface {
 	Jobs(context.Context, string, int64) ([]githubapp.WorkflowJob, error)
 }
 
+type HostExecutor interface {
+	Run(context.Context, config.Host, string) (string, error)
+	Check(context.Context, config.Host, string, string) (string, error)
+	Close()
+}
+
+var errHostCommand = errors.New("host command failed")
+
 type Collector struct {
 	Config     config.Config
 	Store      *store.Store
-	Executor   *Executor
+	Executor   HostExecutor
 	healthHTTP *http.Client
 	GitHub     FleetAPI
 	mu         sync.RWMutex
@@ -40,6 +48,13 @@ type Collector struct {
 type hostCircuit struct {
 	failures  int
 	openUntil time.Time
+}
+
+type hostPollState struct {
+	lastMetrics, lastDiscovery, lastSessions time.Time
+	previous                                 MetricsSnapshot
+	havePrevious                             bool
+	circuit                                  hostCircuit
 }
 
 func (c *hostCircuit) record(attempted bool, err error, now time.Time) bool {
@@ -119,40 +134,10 @@ func (c *Collector) setError(scope string, err error) {
 func (c *Collector) hostLoop(ctx context.Context, h config.Host) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
-	var lastMetrics, lastDiscovery, lastSessions time.Time
-	var previous MetricsSnapshot
-	var havePrevious bool
-	var circuit hostCircuit
+	var state hostPollState
 	for {
 		now := time.Now()
-		if !now.Before(circuit.openUntil) {
-			lock := c.hostLocks[h.ID]
-			lock.Lock()
-			var err error
-			attempted := false
-			if now.Sub(lastMetrics) >= 60*time.Second {
-				attempted = true
-				previous, havePrevious, err = c.pollMetrics(ctx, h, previous, havePrevious)
-				lastMetrics = now
-			}
-			if err == nil && now.Sub(lastDiscovery) >= 5*time.Minute {
-				attempted = true
-				err = c.pollDiscovery(ctx, h)
-				lastDiscovery = now
-			}
-			if err == nil && now.Sub(lastSessions) >= 60*time.Second {
-				attempted = true
-				err = c.pollSessions(ctx, h)
-				lastSessions = now
-			}
-			lock.Unlock()
-			if attempted {
-				c.setError("host:"+h.ID, err)
-			}
-			if circuit.record(attempted, err, now) {
-				_ = c.Store.SetHostPresence(ctx, h.ID, false, now)
-			}
-		}
+		c.pollHost(ctx, h, now, &state)
 		select {
 		case <-ctx.Done():
 			return
@@ -161,10 +146,59 @@ func (c *Collector) hostLoop(ctx context.Context, h config.Host) {
 	}
 }
 
+func (c *Collector) pollHost(ctx context.Context, h config.Host, now time.Time, state *hostPollState) {
+	if now.Before(state.circuit.openUntil) {
+		return
+	}
+	lock := c.hostLocks[h.ID]
+	lock.Lock()
+	defer lock.Unlock()
+	var commandErr error
+	commandSucceeded := false
+	attempt := func(scope string, poll func() error) {
+		err := poll()
+		c.setError(scope+":"+h.ID, err)
+		if errors.Is(err, errHostCommand) {
+			if commandErr == nil {
+				commandErr = err
+			}
+		} else {
+			// A parse or storage error still proves the host command ran.
+			commandSucceeded = true
+		}
+	}
+	if now.Sub(state.lastMetrics) >= time.Minute {
+		attempt("metrics", func() error {
+			var err error
+			state.previous, state.havePrevious, err = c.pollMetrics(ctx, h, state.previous, state.havePrevious)
+			return err
+		})
+		state.lastMetrics = now
+	}
+	if now.Sub(state.lastDiscovery) >= 5*time.Minute {
+		attempt("discovery", func() error { return c.pollDiscovery(ctx, h) })
+		state.lastDiscovery = now
+	}
+	if now.Sub(state.lastSessions) >= time.Minute {
+		attempt("sessions", func() error { return c.pollSessions(ctx, h) })
+		state.lastSessions = now
+	}
+	if commandSucceeded {
+		c.setError("host:"+h.ID, nil)
+		c.setError("host-state:"+h.ID, c.Store.SetHostPresence(ctx, h.ID, true, now))
+		state.circuit.record(true, nil, now)
+	} else if commandErr != nil {
+		c.setError("host:"+h.ID, commandErr)
+		if state.circuit.record(true, commandErr, now) {
+			c.setError("host-state:"+h.ID, c.Store.SetHostPresence(ctx, h.ID, false, now))
+		}
+	}
+}
+
 func (c *Collector) pollMetrics(ctx context.Context, h config.Host, previous MetricsSnapshot, havePrevious bool) (MetricsSnapshot, bool, error) {
 	raw, err := c.Executor.Run(ctx, h, MetricsScript)
 	if err != nil {
-		return previous, havePrevious, err
+		return previous, havePrevious, fmt.Errorf("%w: %w", errHostCommand, err)
 	}
 	snapshot, err := ParseMetricsSnapshot(raw)
 	if err != nil {
@@ -187,7 +221,7 @@ func (c *Collector) pollMetrics(ctx context.Context, h config.Host, previous Met
 func (c *Collector) pollDiscovery(ctx context.Context, h config.Host) error {
 	raw, err := c.Executor.Run(ctx, h, DiscoveryScript)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errHostCommand, err)
 	}
 	candidates, err := ParseDiscovery(raw)
 	if err != nil {
@@ -207,7 +241,7 @@ func (c *Collector) pollDiscovery(ctx context.Context, h config.Host) error {
 func (c *Collector) pollSessions(ctx context.Context, h config.Host) error {
 	raw, err := c.Executor.Run(ctx, h, SessionsScript)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errHostCommand, err)
 	}
 	sessions, err := ParseSessions(raw)
 	if err != nil {
@@ -299,12 +333,16 @@ func (c *Collector) checkProjects(ctx context.Context, projects []store.Project)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lock := c.hostLocks[h.ID]
-			lock.Lock()
-			defer lock.Unlock()
+			sweepCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
 			for _, p := range items {
-				c.checkProject(ctx, h, p)
+				if err := sweepCtx.Err(); err != nil {
+					c.setError("health-sweep:"+h.ID, err)
+					return
+				}
+				c.checkProject(sweepCtx, h, p)
 			}
+			c.setError("health-sweep:"+h.ID, sweepCtx.Err())
 		}()
 	}
 	wg.Wait()
@@ -393,7 +431,7 @@ func checkHTTP(ctx context.Context, client *http.Client, rawURL string) (bool, s
 		if ctx.Err() != nil {
 			return false, "", ctx.Err()
 		}
-		if errors.Is(err, errHealthURLDenied) {
+		if errors.Is(err, errHealthURLDenied) || errors.Is(err, errHealthDNSUnavailable) {
 			return false, "", err
 		}
 		return false, err.Error(), nil
@@ -518,7 +556,7 @@ func (c *Collector) maintenanceLoop(ctx context.Context) {
 	for {
 		now := time.Now()
 		date := now.Format("2006-01-02")
-		c.setError("prune-current", c.Store.PruneCurrent(ctx, now))
+		c.setError("prune-runners", c.Store.PruneRunners(ctx, now))
 		if now.Hour() == 3 && lastPrune != date {
 			err := c.Store.PruneHistory(ctx, now)
 			c.setError("prune-history", err)

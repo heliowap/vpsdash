@@ -6,7 +6,7 @@ import {
   Terminal, Wifi
 } from 'lucide-react'
 import { api, ApiError } from './api'
-import type { Dashboard, Host, Metric, Project, Repository, Runner, Session } from './types'
+import type { Dashboard, Metric, Project, Repository, Runner, Session } from './types'
 
 type Tab = 'overview' | 'projects' | 'fleet' | 'sessions'
 type Notice = { kind: 'error' | 'success'; message: string } | null
@@ -56,11 +56,11 @@ function withLatestMetric(points: Metric[], latest: Metric | undefined, now: num
 }
 
 function sessionUncertain(session: Session, data: Dashboard) {
-  return Boolean(data.collector_errors[`host:${session.host_id}`]) || Date.now() / 1000 - session.seen_at > 120
+  return Boolean(data.collector_errors[`host:${session.host_id}`] || data.collector_errors[`sessions:${session.host_id}`]) || Date.now() / 1000 - session.seen_at > 120
 }
 
 function sessionCollectionCurrent(data: Dashboard, refreshFailed = false) {
-  return !refreshFailed && !Object.keys(data.collector_errors).some(scope => scope.startsWith('host:')) &&
+  return !refreshFailed && !Object.keys(data.collector_errors).some(scope => scope.startsWith('host:') || scope.startsWith('sessions:')) &&
     data.hosts.filter(host => host.kind === 'vps').every(host => Boolean(host.seen_at && Date.now() / 1000 - host.seen_at <= 120)) &&
     data.sessions.every(session => !sessionUncertain(session, data))
 }
@@ -103,17 +103,21 @@ function Login({ onLogin }: { onLogin: (csrf: string) => void }) {
   </main>
 }
 
-function HostLedger({ hosts, histories }: { hosts: Host[]; histories: Record<string, Metric[]> }) {
-  const vps = hosts.filter(host => host.kind === 'vps')
-  const presence = hosts.filter(host => host.kind === 'presence')
+function HostLedger({ data, histories }: { data: Dashboard; histories: Record<string, Metric[]> }) {
+  const vps = data.hosts.filter(host => host.kind === 'vps')
+  const presence = data.hosts.filter(host => host.kind === 'presence')
   return <section className="ledger-section" aria-labelledby="hosts-heading">
     <div className="section-heading"><div><h2 id="hosts-heading">Hosts</h2><p>Métricas da última leitura e tendência de CPU em 30 dias.</p></div><span className="section-count">{vps.length} VPS</span></div>
     {vps.length === 0 ? <div className="empty-line">Nenhuma VPS configurada. Adicione hosts ao inventário do serviço.</div> :
-      <div className="host-list">{vps.map(host => <article className="host-row" key={host.id}>
-        <div className="host-title"><span className={`status-dot ${host.seen_at ? (host.online ? 'is-good' : 'is-bad') : 'is-unknown'}`} aria-hidden="true" /><div><h3>{host.id}</h3><p>{host.seen_at ? `${host.online ? 'Online' : 'Offline'} · ${age(host.seen_at)}` : 'Aguardando primeira leitura'}</p></div></div>
-        <div className="host-measures"><span><b>{pct(host.latest?.cpu_pct)}</b><small>CPU</small></span><span><b>{pct(host.latest?.mem_pct)}</b><small>MEM</small></span><span><b>{pct(host.latest?.disk_pct)}</b><small>DISCO</small></span><span><b>{uptime(host.latest?.uptime_s)}</b><small>UPTIME</small></span></div>
+      <div className="host-list">{vps.map(host => {
+        const presenceCurrent = Boolean(host.seen_at && Date.now() / 1000 - host.seen_at <= 120)
+        const presenceUnknown = !presenceCurrent || (host.online && Boolean(data.collector_errors[`host:${host.id}`]))
+        const currentMetric = host.latest && !data.collector_errors[`metrics:${host.id}`] && Date.now() / 1000 - host.latest.ts <= 120 ? host.latest : undefined
+        return <article className="host-row" key={host.id}>
+        <div className="host-title"><span className={`status-dot ${presenceUnknown ? 'is-unknown' : host.online ? 'is-good' : 'is-bad'}`} aria-hidden="true" /><div><h3>{host.id}</h3><p>{host.seen_at ? `${presenceUnknown ? 'Última observação' : host.online ? 'Online' : 'Offline'} · ${age(host.seen_at)}${currentMetric ? '' : ' · métricas não confirmadas'}` : 'Aguardando primeira leitura'}</p></div></div>
+        <div className="host-measures"><span><b>{pct(currentMetric?.cpu_pct)}</b><small>CPU</small></span><span><b>{pct(currentMetric?.mem_pct)}</b><small>MEM</small></span><span><b>{pct(currentMetric?.disk_pct)}</b><small>DISCO</small></span><span><b>{uptime(currentMetric?.uptime_s)}</b><small>UPTIME</small></span></div>
         <Sparkline points={histories[host.id]} label={host.id} />
-      </article>)}</div>}
+      </article>})}</div>}
     {presence.length > 0 && <div className="presence-line"><Wifi size={16} /><span>{presence.filter(host => host.online).length} de {presence.length} outros dispositivos online na tailnet</span></div>}
   </section>
 }
@@ -121,14 +125,17 @@ function HostLedger({ hosts, histories }: { hosts: Host[]; histories: Record<str
 type Incident = { id: string; title: string; detail: string; age?: number }
 function incidents(data: Dashboard): Incident[] {
   const items: Incident[] = []
-  for (const host of data.hosts) if (host.kind === 'vps' && host.seen_at && !host.online) items.push({ id: `host-${host.id}`, title: `${host.id} está offline`, detail: 'Verifique o acesso SSH e a conexão pela tailnet.', age: host.seen_at })
+  for (const host of data.hosts) if (host.kind === 'vps' && host.seen_at && !host.online && Date.now() / 1000 - host.seen_at <= 120) items.push({ id: `host-${host.id}`, title: `${host.id} está offline`, detail: 'Verifique o acesso SSH e a conexão pela tailnet.', age: host.seen_at })
   for (const project of data.projects) if (project.monitored && project.check_ok === false) items.push({ id: `project-${project.id}`, title: `${project.name} falhou`, detail: `Em ${project.host_id} · verifique o critério monitorado.`, age: project.checked_at })
   for (const runner of data.runners) if (runner.status === 'offline') items.push({ id: `runner-${runner.runner_id}`, title: `${runner.name} está offline`, detail: `Runner de ${runner.repo}.`, age: runner.seen_at })
   for (const [scope] of Object.entries(data.collector_errors)) {
-    if (scope.startsWith('host:') && items.some(item => item.id === `host-${scope.slice(5)}`)) continue
-    items.push({ id: `collector-${scope}`, title: `Coleta indisponível: ${scope.replace(':', ' / ')}`, detail: 'A última consulta falhou. Confira a configuração e os logs do serviço.' })
+    const [kind, id] = scope.split(':', 2)
+    if (kind === 'host' && items.some(item => item.id === `host-${id}`)) continue
+    if (['metrics', 'discovery', 'sessions'].includes(kind) && data.collector_errors[`host:${id}`]) continue
+    const names: Record<string, string> = { host: 'Acesso SSH', metrics: 'Métricas', discovery: 'Descoberta', sessions: 'Sessões' }
+    items.push({ id: `collector-${scope}`, title: `${names[kind] || 'Coleta'} indisponível: ${id || scope}`, detail: 'A última consulta falhou. Confira a configuração e os logs do serviço.' })
   }
-  for (const repo of data.repositories) if (repo.error && !data.collector_errors[`github:${repo.name}`]) {
+  for (const repo of data.repositories) if (repo.error && repo.error !== 'GitHub em coleta' && !data.collector_errors[`github:${repo.name}`]) {
     items.push({ id: `integration-${repo.name}`, title: `GitHub indisponível: ${repo.name}`, detail: repo.error })
   }
   return items
@@ -149,7 +156,7 @@ function Overview({ data, histories, refreshFailed }: { data: Dashboard; histori
       {problems.length > 0 && <div className="incident-list">{problems.map(problem => <div className="incident-row" key={problem.id}><AlertCircle size={19} /><div><strong>{problem.title}</strong><small>{problem.detail}</small></div>{problem.age && <time>{age(problem.age)}</time>}</div>)}</div>}
       {!data.smtp_provisioned && <div className="situation-warning"><AlertCircle size={16} /><span>Alertas por e-mail ainda não provisionados.</span></div>}
     </section>
-    <HostLedger hosts={data.hosts} histories={histories} />
+    <HostLedger data={data} histories={histories} />
     <section className="ledger-section overview-tail" aria-labelledby="activity-heading"><div className="section-heading"><div><h2 id="activity-heading">Em andamento</h2><p>Atividade recente da frota e das sessões.</p></div></div>
       <div className="activity-grid"><div><span className="activity-number">{fleetCurrent ? data.runners.filter(runner => runner.busy).length : '—'}</span><span>runners ocupados</span></div><div><span className="activity-number">{fleetCurrent ? Object.values(data.queued).flat().length : '—'}</span><span>jobs na fila</span></div><div><span className="activity-number">{sessionsCurrent ? data.sessions.length : '—'}</span><span>sessões tmux</span></div></div>
     </section>
@@ -222,8 +229,8 @@ function RepoSwitch({ repo, variable, csrf, onRefresh }: { repo: Repository; var
     catch (err) { setFeedback({ kind: 'error', message: err instanceof Error ? err.message : 'Não foi possível trocar.' }) }
     finally { setBusy(false) }
   }
-  return <div className="backend-row"><div><strong>{variable === 'AGENT_RUNNER' ? 'Agentes' : 'CI'}</strong><small>{!enabled ? 'Workflow sem switch confirmado' : repo.error ? 'Valor atual desconhecido — GitHub indisponível' : `Atual: ${current || 'padrão do workflow'}`}</small></div>
-    {operable ? <div className="backend-control"><select aria-label={`Backend de ${variable} em ${repo.name}`} value={choice} onChange={event => { setChoice(event.target.value); setConfirm(false) }}>{labels.map(label => <option key={label} value={label}>{label}</option>)}</select><button className="button button-small" type="button" disabled={choice === current || busy} onClick={() => setConfirm(true)}>Trocar</button></div> : enabled ? <span className="muted-text">Integração indisponível</span> : <a className="button button-small" href={`https://github.com/${repo.name}/pulls`} target="_blank" rel="noreferrer" aria-label={`Abrir PRs de ${repo.name} para solicitar adoção de ${variable}`}>Abrir PRs para pedir /oc</a>}
+  return <div className="backend-row"><div><strong>{variable === 'AGENT_RUNNER' ? 'Agentes' : 'CI'}</strong><small>{!enabled ? 'Workflow sem switch confirmado' : repo.error === 'GitHub em coleta' ? 'Consultando valor atual no GitHub…' : repo.error ? 'Valor atual desconhecido — GitHub indisponível' : `Atual: ${current || 'padrão do workflow'}`}</small></div>
+    {operable ? <div className="backend-control"><select aria-label={`Backend de ${variable} em ${repo.name}`} value={choice} onChange={event => { setChoice(event.target.value); setConfirm(false) }}>{labels.map(label => <option key={label} value={label}>{label}</option>)}</select><button className="button button-small" type="button" disabled={choice === current || busy} onClick={() => setConfirm(true)}>Trocar</button></div> : enabled ? <span className="muted-text">{repo.error === 'GitHub em coleta' ? 'Em coleta' : 'Integração indisponível'}</span> : <a className="button button-small" href={`https://github.com/${repo.name}/pulls`} target="_blank" rel="noreferrer" aria-label={`Abrir PRs de ${repo.name} para solicitar adoção de ${variable}`}>Abrir PRs para pedir /oc</a>}
     {confirm && <div className="inline-confirm"><span>Trocar {repo.name} de <b>{current || 'padrão'}</b> para <b>{choice}</b>?</span><div><button type="button" className="button button-small button-primary" disabled={busy} onClick={apply}>{busy ? 'Aplicando…' : 'Confirmar'}</button><button type="button" className="button button-small button-plain" onClick={() => setConfirm(false)}>Cancelar</button></div></div>}
     {feedback && <p className={`inline-feedback ${feedback.kind === 'error' ? 'is-error' : ''}`} role={feedback.kind === 'error' ? 'alert' : 'status'}>{feedback.message}</p>}
   </div>
@@ -282,7 +289,7 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
       <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
       <section className="ledger-section"><div className="section-heading"><h2>Fila</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}`}</span></div>{queue.length ? <div className="ruled-list">{queue.map(run => <a className="queue-row" key={`${run.repo}-${run.id}`} href={run.html_url} target="_blank" rel="noreferrer"><Clock3 size={18} /><span><strong>{run.display_title || run.name}</strong><small>{run.repo}</small></span><ArrowUpRight size={17} /></a>)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual da fila não está disponível.' : 'Nenhum job aguardando runner.'}</div>}</section>
     </>}
-    <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className="state-stamp stamp-bad">{repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
+    <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className={`state-stamp ${repo.error === 'GitHub em coleta' ? 'stamp-unknown' : 'stamp-bad'}`}>{repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
     {hasOperations && <>
       <section className="ledger-section">
         <div className="section-heading"><h2>Aplicar em lote</h2></div>
@@ -378,6 +385,11 @@ export default function App() {
 
   useEffect(() => { api.session().then(setSession).catch(() => setSession({ authenticated: false, csrf: '' })) }, [])
   useEffect(() => { if (!session?.authenticated) return; void refresh(); const timer = window.setInterval(() => void refresh(), 30_000); return () => window.clearInterval(timer) }, [refresh, session?.authenticated])
+  useEffect(() => {
+    if (!session?.authenticated || !data?.repositories.some(repo => repo.error === 'GitHub em coleta')) return
+    const timer = window.setTimeout(() => void refresh(), 3_000)
+    return () => window.clearTimeout(timer)
+  }, [data, refresh, session?.authenticated])
 
   async function logout() {
     if (!session) return

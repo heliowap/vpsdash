@@ -60,6 +60,9 @@ Serve. Ele preserva credenciais já existentes e pode ser executado de novo
 se alguma etapa ficar pendente. Ele lê as VPSs remotas do inventário privado
 e identifica o host local pelo DNS do Tailscale; ajuste `config.json` antes
 de executá-lo para uma frota diferente da configuração de exemplo.
+No exemplo, as VPSs remotas começam como presença Tailscale e só passam a
+`vps` após a chave SSH ser verificada. O caminho de chave no inventário
+preserva essa intenção para uma nova execução do assistente.
 
 Para os hosts remotos, obtenha o fingerprint Ed25519 no console do próprio
 host antes de informá-lo ao assistente. Nesse console, execute
@@ -103,7 +106,9 @@ Uma URL de health pode apontar para um endereço público ou para o nome DNS
 de um host presente no inventário. Destinos privados só são aceitos quando
 o hostname consta do inventário; redirecionamentos para outro host são
 recusados. A regra vale ao salvar e na coleta. Para serviços internos, use
-o DNS da tailnet do host ou o check de serviços esperados.
+o DNS da tailnet do host ou o check de serviços esperados. Se o DNS não
+responder ao salvar, a URL bem formada é aceita; a coleta só confirma o
+estado após resolver e validar o destino.
 
 Como `vpsdash`, gere a senha e a chave de sessão:
 
@@ -204,10 +209,14 @@ app.example.com {
 ```
 
 O proxy deve sobrescrever `X-Real-IP` com o IP da conexão recebida; não
-encaminhe um valor fornecido pelo navegador. O login usa esse IP para limitar
-tentativas, e o serviço limita também o número total de verificações de senha
-simultâneas. Se outro proxy estiver à frente do Caddy, configure a cadeia de
-proxies confiáveis antes de usar o IP do cliente. A página de login é pública;
+encaminhe um valor fornecido pelo navegador. O serviço ignora esse cabeçalho
+por padrão, pois Tailscale Serve também acessa a porta de loopback. Ative
+`"trust_proxy_header": true` em `config.json` somente se **todas** as rotas
+de loopback passarem por um proxy que sobrescreve o cabeçalho, sem uma rota
+Tailscale Serve compartilhando a porta. O login limita cinco falhas por IP e
+20 falhas globais em cinco minutos, além de duas verificações simultâneas.
+Se outro proxy estiver à frente do Caddy, configure a cadeia de proxies
+confiáveis antes de usar o IP do cliente. A página de login é pública;
 as APIs de operação exigem sessão assinada. Confira a rota após a instalação:
 
 ```bash

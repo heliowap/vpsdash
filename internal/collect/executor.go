@@ -126,6 +126,8 @@ func (e *Executor) client(host config.Host) (*ssh.Client, error) {
 		return nil, err
 	}
 	home, _ := os.UserHomeDir()
+	// Re-read known_hosts for each new handshake. An existing SSH connection
+	// continues using the host identity authenticated when it was opened.
 	known, err := knownhosts.New(filepath.Join(home, ".ssh", "known_hosts"))
 	if err != nil {
 		return nil, fmt.Errorf("known_hosts: %w", err)
