@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -71,12 +72,30 @@ ON CONFLICT(host_id,name) DO UPDATE SET pane_pid=excluded.pane_pid,cwd=excluded.
 
 // ReplaceSessions records a complete successful snapshot for one host. A
 // failed collector poll never calls this method, so its last snapshot remains.
+// An agent session that enters the "waiting" state queues an agent_waiting
+// alert, which is routed to Web Push only.
 func (s *Store) ReplaceSessions(ctx context.Context, hostID string, sessions []Session, at time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	previous := map[string]string{}
+	rows, err := tx.QueryContext(ctx, `SELECT name,COALESCE(state,'') FROM tmux_sessions WHERE host_id=?`, hostID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var name, state string
+		if err := rows.Scan(&name, &state); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		previous[name] = state
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM tmux_sessions WHERE host_id=?`, hostID); err != nil {
 		return err
 	}
@@ -84,6 +103,11 @@ func (s *Store) ReplaceSessions(ctx context.Context, hostID string, sessions []S
 		if _, err := tx.ExecContext(ctx, `INSERT INTO tmux_sessions(host_id,name,pane_pid,cwd,agent,state,seen_at) VALUES (?,?,?,?,?,?,?)`,
 			hostID, session.Name, session.PanePID, session.CWD, session.Agent, session.State, at.Unix()); err != nil {
 			return err
+		}
+		if session.State == "waiting" && previous[session.Name] != "waiting" {
+			if err := queueAlert(ctx, tx, nil, AlertAgentWaiting, hostID+" / "+session.Name, agentWaitingBody(session), at); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()
@@ -106,22 +130,6 @@ func (s *Store) Sessions(ctx context.Context) ([]Session, error) {
 	return result, rows.Err()
 }
 
-func (s *Store) QueueAlert(ctx context.Context, kind, subject, body string) error {
-	return s.queueAlert(ctx, nil, kind, subject, body, time.Now())
-}
-
-// QueueProjectAlert records the alert against its project and the check time
-// that crossed the threshold, so the incident history can place it later.
-func (s *Store) QueueProjectAlert(ctx context.Context, projectID int64, kind, subject, body string, at time.Time) error {
-	return s.queueAlert(ctx, projectID, kind, subject, body, at)
-}
-
-func (s *Store) queueAlert(ctx context.Context, projectID any, kind, subject, body string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO alerts(kind,subject,body,sent_at,channel,project_id,created_at)
-SELECT ?,?,?,0,'smtp',?,? WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE kind=? AND subject=? AND (sent_at=0 OR sent_at>?))`, kind, subject, body, projectID, at.Unix(), kind, subject, time.Now().Add(-time.Hour).Unix())
-	return err
-}
-
 func (s *Store) PendingAlerts(ctx context.Context) ([]Alert, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,kind,subject,body,sent_at,channel FROM alerts WHERE sent_at=0 AND channel='smtp' ORDER BY id`)
 	if err != nil {
@@ -142,4 +150,16 @@ func (s *Store) PendingAlerts(ctx context.Context) ([]Alert, error) {
 func (s *Store) MarkAlertSent(ctx context.Context, id int64, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE alerts SET sent_at=? WHERE id=? AND sent_at=0`, at.Unix(), id)
 	return err
+}
+
+func agentWaitingBody(session Session) string {
+	agent := session.Agent
+	if agent == "" {
+		agent = "O agente"
+	}
+	body := agent + " aguarda sua resposta na sessão " + session.Name + "."
+	if session.CWD != "" {
+		body += " Diretório: " + session.CWD + "."
+	}
+	return body
 }

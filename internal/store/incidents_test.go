@@ -115,3 +115,38 @@ func TestProjectIncidentsDerivesRunsWithinRetention(t *testing.T) {
 		t.Fatalf("missing project error = %v", err)
 	}
 }
+
+func TestProjectAlertOnEveryChannelShowsOnceInHistory(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.UpsertHost(ctx, Host{ID: "vps", TailnetName: "vps.example.invalid", Kind: "vps"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertCandidate(ctx, "vps", "web", "docker"); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := s.Projects(ctx)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("projects = %+v, %v", projects, err)
+	}
+	id := projects[0].ID
+	if err := s.SetMonitored(ctx, id, true, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SavePushSubscription(ctx, PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/x", P256DH: "k", Auth: "a"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	at := now.Add(-time.Minute)
+	if err := s.QueueProjectAlert(ctx, id, AlertProjectDown, "vps / web", "down", at); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM alerts WHERE project_id=?`, id).Scan(&rows); err != nil || rows != 2 {
+		t.Fatalf("alert rows = %d, %v; want one per channel", rows, err)
+	}
+	alerts, err := s.projectAlerts(ctx, id, 0, now.Unix())
+	if err != nil || len(alerts) != 1 || alerts[0].at != at.Unix() {
+		t.Fatalf("history alerts = %+v, %v", alerts, err)
+	}
+}

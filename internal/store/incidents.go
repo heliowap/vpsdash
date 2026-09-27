@@ -159,7 +159,8 @@ type projectAlert struct {
 }
 
 func (s *Store) projectAlerts(ctx context.Context, projectID, since, until int64) ([]projectAlert, error) {
-	rows, err := s.history.QueryContext(ctx, `SELECT created_at,body FROM alerts WHERE project_id=? AND created_at>=? AND created_at<=? ORDER BY created_at,id`, projectID, since, until)
+	// One event is stored once per delivery channel; history shows it once.
+	rows, err := s.history.QueryContext(ctx, `SELECT created_at,body FROM alerts WHERE project_id=? AND created_at>=? AND created_at<=? GROUP BY created_at,body ORDER BY created_at,MIN(id)`, projectID, since, until)
 	if err != nil {
 		return nil, err
 	}
