@@ -33,7 +33,14 @@ tmux list-sessions -F 'tmux	#{session_name}	active' 2>/dev/null || true
 `
 
 const SessionsScript = `
-tmux list-panes -a -F '#{session_name}	#{pane_pid}	#{pane_current_command}	#{pane_current_path}' 2>/dev/null || true
+tmux list-panes -a -F '#{session_name}	#{pane_pid}	#{pane_current_command}	#{pane_current_path}	#{pane_id}' 2>/dev/null || true
 printf '%s\n' '--PROCESSES--'
-ps -eo pid=,ppid=,comm=,args=
+ps -eo pid=,ppid=,stat=,times=,comm=,args=
+printf '%s\n' '--SCREENS--'
+for pane in $(tmux list-panes -a -F '#{pane_id}' 2>/dev/null); do
+  screen=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || continue
+  sum=$(printf '%s' "$screen" | cksum)
+  last=$(printf '%s\n' "$screen" | awk 'NF { line = $0 } END { print substr(line, 1, 160) }')
+  printf '%s\t%s\t%s\n' "$pane" "${sum%% *}" "$last"
+done
 `

@@ -14,7 +14,7 @@ import sys
 APPROVED_SCRIPTS = {
     "44c270297679ba536d8236382fdc608d42fa16e475ff8baf4b18b90d8400e2dd",  # metrics
     "bd00bf9b9b1ce93a4d5fe8e7307e9af7f0bb72747fd5ef5183582545aa1ed724",  # discovery
-    "65f9c354476d0e225f0e529734d1b8a7eee4130d5ec56f5376ad1844c073c82b",  # sessions
+    "3b2fec531375fcff0b0ad4482400c685158a6523c10b053290d14f7c6fe66977",  # sessions
 }
 RUNNER_UNITS_DIGEST = "0df33256bd3e5fae028dbebf0eaab5962e85c63a16187bf3ac06bfa55852d0d2"
 

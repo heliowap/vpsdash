@@ -11,31 +11,55 @@ type SessionCandidate struct {
 	PanePID int    `json:"pane_pid"`
 	CWD     string `json:"cwd"`
 	Agent   string `json:"agent,omitempty"`
+	// Inputs for the agent state heuristic; never persisted or served.
+	PaneID     string `json:"-"`
+	CPUSeconds int    `json:"-"`
+	Sleeping   bool   `json:"-"`
+	Screen     string `json:"-"`
+	LastLine   string `json:"-"`
 }
 
 type process struct {
-	pid, parent   int
-	command, args string
+	pid, parent, cpu    int
+	stat, command, args string
 }
+
+type paneScreen struct{ checksum, lastLine string }
 
 func ParseSessions(raw string) ([]SessionCandidate, error) {
 	sections := strings.SplitN(raw, "--PROCESSES--", 2)
 	if len(sections) != 2 {
 		return nil, fmt.Errorf("tmux output has no process section")
 	}
+	screens := map[string]paneScreen{}
+	if parts := strings.SplitN(sections[1], "--SCREENS--", 2); len(parts) == 2 {
+		sections[1] = parts[0]
+		for _, line := range strings.Split(parts[1], "\n") {
+			fields := strings.SplitN(line, "\t", 3)
+			if len(fields) < 2 || fields[0] == "" {
+				continue
+			}
+			screen := paneScreen{checksum: fields[1]}
+			if len(fields) == 3 {
+				screen.lastLine = fields[2]
+			}
+			screens[fields[0]] = screen
+		}
+	}
 	processes := map[int]process{}
 	children := map[int][]int{}
 	for _, line := range strings.Split(strings.TrimSpace(sections[1]), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 4 {
+		if len(fields) < 6 {
 			continue
 		}
 		pid, pidErr := strconv.Atoi(fields[0])
 		parent, parentErr := strconv.Atoi(fields[1])
-		if pidErr != nil || parentErr != nil {
+		cpu, cpuErr := strconv.Atoi(fields[3])
+		if pidErr != nil || parentErr != nil || cpuErr != nil {
 			continue
 		}
-		processes[pid] = process{pid: pid, parent: parent, command: fields[2], args: strings.Join(fields[3:], " ")}
+		processes[pid] = process{pid: pid, parent: parent, cpu: cpu, stat: fields[2], command: fields[4], args: strings.Join(fields[5:], " ")}
 		children[parent] = append(children[parent], pid)
 	}
 	result := []SessionCandidate{}
@@ -53,6 +77,12 @@ func ParseSessions(raw string) ([]SessionCandidate, error) {
 			return nil, err
 		}
 		session := SessionCandidate{Name: fields[0], PanePID: pid, CWD: fields[3]}
+		if len(fields) > 4 {
+			session.PaneID = fields[4]
+			screen := screens[session.PaneID]
+			session.Screen, session.LastLine = screen.checksum, screen.lastLine
+		}
+		agentPID := pid
 		seen := map[int]bool{}
 		queue := []int{pid}
 		for len(queue) > 0 {
@@ -63,9 +93,11 @@ func ParseSessions(raw string) ([]SessionCandidate, error) {
 			}
 			seen[current] = true
 			if p, ok := processes[current]; ok {
-				if agent := detectAgent(p.command, p.args); agent != "" {
-					session.Agent = agent
-					break
+				session.CPUSeconds += p.cpu
+				if session.Agent == "" {
+					if agent := detectAgent(p.command, p.args); agent != "" {
+						session.Agent, agentPID = agent, current
+					}
 				}
 			}
 			queue = append(queue, children[current]...)
@@ -73,6 +105,7 @@ func ParseSessions(raw string) ([]SessionCandidate, error) {
 		if session.Agent == "" {
 			session.Agent = detectAgent(fields[2], fields[2])
 		}
+		session.Sleeping = strings.HasPrefix(processes[agentPID].stat, "S")
 		if index, exists := byName[session.Name]; exists {
 			if result[index].Agent == "" && session.Agent != "" {
 				result[index] = session
