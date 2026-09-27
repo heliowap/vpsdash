@@ -162,8 +162,11 @@ func newHealthHTTPClientWithPolicy(policy *healthPolicy) *http.Client {
 		Timeout:   10 * time.Second,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 || (len(via) > 0 && normalizedHost(req.URL.Hostname()) != normalizedHost(via[0].URL.Hostname())) {
-				return fmt.Errorf("%w: redirect changed host or exceeded limit", errHealthURLDenied)
+			if len(via) >= 5 {
+				return fmt.Errorf("%w: redirect exceeded limit", errHealthURLDenied)
+			}
+			if len(via) > 0 && normalizedHost(req.URL.Hostname()) != normalizedHost(via[0].URL.Hostname()) {
+				return fmt.Errorf("%w: redirect changed host", errHealthURLDenied)
 			}
 			return policy.validate(req.Context(), req.URL.String())
 		},

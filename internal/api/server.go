@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -173,6 +174,9 @@ func (s *Server) finishLogin(ip string, success bool, now time.Time) {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
 	attempts := s.loginAttempts[ip]
+	if attempts == nil {
+		return
+	}
 	attempts.pending--
 	s.globalPending--
 	if success {
@@ -201,7 +205,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		errorResponse(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente em instantes.")
 		return
 	}
-	ip := loginClientIP(r, s.Config.TrustProxyHeader)
+	ip := s.loginClientIP(r)
 	if !s.reserveLogin(ip, time.Now()) {
 		errorResponse(w, http.StatusTooManyRequests, "Muitas tentativas. Tente novamente em cinco minutos.")
 		return
@@ -220,13 +224,37 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"authenticated": true, "csrf": csrf})
 }
 
-func loginClientIP(r *http.Request, trustProxyHeader bool) string {
+var tailscaleIPv4 = netip.MustParsePrefix("100.64.0.0/10")
+var tailscaleIPv6 = netip.MustParsePrefix("fd7a:115c:a1e0::/48")
+
+func (s *Server) loginClientIP(r *http.Request) string {
 	ip := r.RemoteAddr
 	if host, _, err := net.SplitHostPort(ip); err == nil {
 		ip = host
 	}
-	// A loopback peer alone cannot identify which proxy supplied the header.
-	if remote := net.ParseIP(ip); trustProxyHeader && remote != nil && remote.IsLoopback() {
+	remote := net.ParseIP(ip)
+	if remote == nil || !remote.IsLoopback() {
+		return ip
+	}
+	host := r.Host
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		host = name
+	}
+	if s.Config.TailscaleServeHost != "" {
+		// Serve overwrites X-Forwarded-For with the tailnet source. Match its
+		// address before Host: a tailnet client can send a different Host and
+		// a forged X-Real-IP, while Serve still forwards the request.
+		if forwarded, err := netip.ParseAddr(r.Header.Get("X-Forwarded-For")); err == nil {
+			forwarded = forwarded.Unmap()
+			if tailscaleIPv4.Contains(forwarded) || tailscaleIPv6.Contains(forwarded) {
+				return forwarded.String()
+			}
+		}
+		if strings.EqualFold(strings.TrimSuffix(host, "."), s.Config.TailscaleServeHost) {
+			return ip
+		}
+	}
+	if s.Config.TrustProxyHeader {
 		if forwarded := net.ParseIP(r.Header.Get("X-Real-IP")); forwarded != nil {
 			return forwarded.String()
 		}
@@ -260,6 +288,8 @@ type repoView struct {
 	CISwitchable    bool   `json:"ci_switchable"`
 	AgentRunner     string `json:"agent_runner"`
 	CIRunner        string `json:"ci_runner"`
+	AgentKnown      bool   `json:"agent_known"`
+	CIKnown         bool   `json:"ci_known"`
 	Error           string `json:"error,omitempty"`
 }
 
@@ -295,7 +325,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	repos := make([]repoView, 0, len(s.Config.Repositories))
 	for _, cfg := range s.Config.Repositories {
 		view := repoView{Name: cfg.Name, AgentSwitchable: cfg.AgentSwitchable, CISwitchable: cfg.CISwitchable}
-		view.AgentRunner, view.CIRunner, view.Error = s.repositoryVariables(cfg.Name)
+		view.AgentRunner, view.CIRunner, view.AgentKnown, view.CIKnown, view.Error = s.repositoryVariables(cfg.Name)
 		repos = append(repos, view)
 	}
 	fleetSeenAt := int64(0)
@@ -531,6 +561,9 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(path, ".woff2") {
 		w.Header().Set("Content-Type", "font/woff2")
+	}
+	if strings.HasSuffix(path, ".woff") {
+		w.Header().Set("Content-Type", "font/woff")
 	}
 	if strings.HasSuffix(path, ".webmanifest") {
 		w.Header().Set("Content-Type", "application/manifest+json")

@@ -129,11 +129,29 @@ function incidents(data: Dashboard): Incident[] {
   for (const project of data.projects) if (project.monitored && project.check_ok === false) items.push({ id: `project-${project.id}`, title: `${project.name} falhou`, detail: `Em ${project.host_id} · verifique o critério monitorado.`, age: project.checked_at })
   for (const runner of data.runners) if (runner.status === 'offline') items.push({ id: `runner-${runner.runner_id}`, title: `${runner.name} está offline`, detail: `Runner de ${runner.repo}.`, age: runner.seen_at })
   for (const [scope] of Object.entries(data.collector_errors)) {
-    const [kind, id] = scope.split(':', 2)
+    const [kind, id = ''] = scope.split(':', 2)
     if (kind === 'host' && items.some(item => item.id === `host-${id}`)) continue
-    if (['metrics', 'discovery', 'sessions'].includes(kind) && data.collector_errors[`host:${id}`]) continue
-    const names: Record<string, string> = { host: 'Acesso SSH', metrics: 'Métricas', discovery: 'Descoberta', sessions: 'Sessões' }
-    items.push({ id: `collector-${scope}`, title: `${names[kind] || 'Coleta'} indisponível: ${id || scope}`, detail: 'A última consulta falhou. Confira a configuração e os logs do serviço.' })
+    if (['metrics', 'discovery', 'sessions', 'health-sweep', 'check'].includes(kind) && data.collector_errors[`host:${kind === 'check' ? id.split('/')[0] : id}`]) continue
+    const incident = (() => {
+      switch (kind) {
+        case 'host': return { title: `Acesso SSH não confirmado: ${id}`, detail: 'Confira a conexão SSH e a tailnet.' }
+        case 'host-state': return { title: `Estado do host não salvo: ${id}`, detail: 'A gravação no banco local falhou. Confira os logs do serviço.' }
+        case 'metrics': return { title: `Métricas não confirmadas: ${id}`, detail: 'A última leitura de CPU, memória ou disco falhou.' }
+        case 'discovery': return { title: `Descoberta não confirmada: ${id}`, detail: 'A última leitura dos projetos falhou.' }
+        case 'sessions': return { title: `Sessões não confirmadas: ${id}`, detail: 'A última leitura das sessões tmux falhou.' }
+        case 'health-sweep': return { title: `Checks pendentes: ${id}`, detail: 'A verificação dos projetos não terminou no prazo.' }
+        case 'check': return { title: `Check não confirmado: ${id}`, detail: 'A consulta do projeto falhou. Confira o critério monitorado e os logs.' }
+        case 'runner-units': return { title: `Units de runners não confirmadas: ${id}`, detail: 'Confira a coleta SSH da conta gh-agents e os logs.' }
+        case 'prune-runners': return { title: 'Limpeza de runners pendente', detail: 'A atualização do histórico no banco local falhou.' }
+        case 'prune-history': return { title: 'Limpeza do histórico pendente', detail: 'A manutenção do banco local falhou.' }
+        case 'vacuum': return { title: 'Manutenção do banco pendente', detail: 'A compactação do banco local falhou.' }
+        case 'tailnet': return { title: 'Presença Tailscale não confirmada', detail: 'A última consulta da tailnet falhou.' }
+        case 'health': return { title: 'Checks de saúde não confirmados', detail: 'A última consulta dos projetos monitorados falhou.' }
+        case 'github': return { title: `GitHub não confirmado: ${id}`, detail: 'A última leitura de runners ou jobs falhou.' }
+        default: return { title: `Coleta não confirmada: ${scope}`, detail: 'Confira os logs do serviço.' }
+      }
+    })()
+    items.push({ id: `collector-${scope}`, ...incident })
   }
   for (const repo of data.repositories) if (repo.error && repo.error !== 'GitHub em coleta' && !data.collector_errors[`github:${repo.name}`]) {
     items.push({ id: `integration-${repo.name}`, title: `GitHub indisponível: ${repo.name}`, detail: repo.error })
@@ -216,8 +234,9 @@ function Projects({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; on
 
 function RepoSwitch({ repo, variable, csrf, onRefresh }: { repo: Repository; variable: 'AGENT_RUNNER' | 'CI_RUNNER'; csrf: string; onRefresh: () => void }) {
   const current = variable === 'AGENT_RUNNER' ? repo.agent_runner : repo.ci_runner
+  const currentKnown = variable === 'AGENT_RUNNER' ? repo.agent_known : repo.ci_known
   const enabled = variable === 'AGENT_RUNNER' ? repo.agent_switchable : repo.ci_switchable
-  const operable = enabled && !repo.error
+  const operable = enabled && currentKnown && (!repo.error || repo.error === 'GitHub em coleta')
   const [choice, setChoice] = useState(current || 'self-hosted')
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -229,7 +248,7 @@ function RepoSwitch({ repo, variable, csrf, onRefresh }: { repo: Repository; var
     catch (err) { setFeedback({ kind: 'error', message: err instanceof Error ? err.message : 'Não foi possível trocar.' }) }
     finally { setBusy(false) }
   }
-  return <div className="backend-row"><div><strong>{variable === 'AGENT_RUNNER' ? 'Agentes' : 'CI'}</strong><small>{!enabled ? 'Workflow sem switch confirmado' : repo.error === 'GitHub em coleta' ? 'Consultando valor atual no GitHub…' : repo.error ? 'Valor atual desconhecido — GitHub indisponível' : `Atual: ${current || 'padrão do workflow'}`}</small></div>
+  return <div className="backend-row"><div><strong>{variable === 'AGENT_RUNNER' ? 'Agentes' : 'CI'}</strong><small>{!enabled ? 'Workflow sem switch confirmado' : currentKnown ? `${repo.error && repo.error !== 'GitHub em coleta' ? 'Último valor confirmado' : 'Atual'}: ${current || 'padrão do workflow'}` : repo.error === 'GitHub em coleta' ? 'Consultando valor atual no GitHub…' : 'Valor atual desconhecido — GitHub indisponível'}</small></div>
     {operable ? <div className="backend-control"><select aria-label={`Backend de ${variable} em ${repo.name}`} value={choice} onChange={event => { setChoice(event.target.value); setConfirm(false) }}>{labels.map(label => <option key={label} value={label}>{label}</option>)}</select><button className="button button-small" type="button" disabled={choice === current || busy} onClick={() => setConfirm(true)}>Trocar</button></div> : enabled ? <span className="muted-text">{repo.error === 'GitHub em coleta' ? 'Em coleta' : 'Integração indisponível'}</span> : <a className="button button-small" href={`https://github.com/${repo.name}/pulls`} target="_blank" rel="noreferrer" aria-label={`Abrir PRs de ${repo.name} para solicitar adoção de ${variable}`}>Abrir PRs para pedir /oc</a>}
     {confirm && <div className="inline-confirm"><span>Trocar {repo.name} de <b>{current || 'padrão'}</b> para <b>{choice}</b>?</span><div><button type="button" className="button button-small button-primary" disabled={busy} onClick={apply}>{busy ? 'Aplicando…' : 'Confirmar'}</button><button type="button" className="button button-small button-plain" onClick={() => setConfirm(false)}>Cancelar</button></div></div>}
     {feedback && <p className={`inline-feedback ${feedback.kind === 'error' ? 'is-error' : ''}`} role={feedback.kind === 'error' ? 'alert' : 'status'}>{feedback.message}</p>}
@@ -257,16 +276,16 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
   const [bulkPending, setBulkPending] = useState(false)
   const [feedback, setFeedback] = useState<Notice>(null)
   const [busy, setBusy] = useState(false)
-  const selectable = data.repositories.filter(repo => !repo.error && (bulkVariable === 'AGENT_RUNNER' ? repo.agent_switchable : repo.ci_switchable))
-  const hasOperations = data.repositories.some(repo => !repo.error && (repo.agent_switchable || repo.ci_switchable))
+  const selectable = data.repositories.filter(repo => (!repo.error || repo.error === 'GitHub em coleta') && (bulkVariable === 'AGENT_RUNNER' ? repo.agent_switchable && repo.agent_known : repo.ci_switchable && repo.ci_known))
+  const hasOperations = data.repositories.some(repo => (!repo.error || repo.error === 'GitHub em coleta') && (repo.agent_switchable && repo.agent_known || repo.ci_switchable && repo.ci_known))
   const fleetObserved = data.fleet_seen_at > 0
   const fleetErrors = Object.keys(data.collector_errors).some(scope => scope.startsWith('github:'))
   const fleetStale = fleetObserved && Date.now() / 1000 - data.fleet_seen_at > 120
   const fleetUncertain = refreshFailed || fleetErrors || fleetStale
   const bulkTargets: SwitchTarget[] = selectable.filter(repo => selected.includes(repo.name)).map(repo => ({ repo: repo.name, variable: bulkVariable, current: bulkVariable === 'AGENT_RUNNER' ? repo.agent_runner : repo.ci_runner, currentKnown: true }))
   const presetTargets: SwitchTarget[] = data.repositories.flatMap(repo => ([
-    ...(repo.agent_switchable ? [{ repo: repo.name, variable: 'AGENT_RUNNER' as const, current: repo.agent_runner, currentKnown: !repo.error }] : []),
-    ...(repo.ci_switchable ? [{ repo: repo.name, variable: 'CI_RUNNER' as const, current: repo.ci_runner, currentKnown: !repo.error }] : [])
+    ...(repo.agent_switchable ? [{ repo: repo.name, variable: 'AGENT_RUNNER' as const, current: repo.agent_runner, currentKnown: repo.agent_known && (!repo.error || repo.error === 'GitHub em coleta') }] : []),
+    ...(repo.ci_switchable ? [{ repo: repo.name, variable: 'CI_RUNNER' as const, current: repo.ci_runner, currentKnown: repo.ci_known && (!repo.error || repo.error === 'GitHub em coleta') }] : [])
   ]))
   const unknownPresetTargets = presetTargets.filter(target => !target.currentKnown).length
   const pendingPreset = presets.find(preset => preset.id === presetPending)

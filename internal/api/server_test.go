@@ -166,6 +166,65 @@ func TestLoginRateLimitSeparatesClientsBehindLocalProxy(t *testing.T) {
 	}
 }
 
+func TestLoginRateLimitSeparatesTailscaleServeClients(t *testing.T) {
+	hash, err := auth.HashPassword("correct horse battery staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := auth.New(hash, []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(config.Config{TrustProxyHeader: true, TailscaleServeHost: "sample-vps.example.invalid"}, nil, nil, nil, a).Handler()
+	request := func(clientIP, spoofedRealIP, host string) int {
+		r := httptest.NewRequest("POST", "https://sample-vps.example.invalid:8443/api/login", strings.NewReader(`{"password":"wrong"}`))
+		r.Host = host
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("X-Forwarded-For", clientIP)
+		r.Header.Set("X-Real-IP", spoofedRealIP)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := 0; i < 5; i++ {
+		host := "sample-vps.example.invalid:8443"
+		if i%2 == 1 {
+			host = "app.example.com"
+		}
+		if got := request("100.101.102.103", "203.0.113."+strconv.Itoa(i+1), host); got != http.StatusUnauthorized {
+			t.Fatalf("tailnet attempt %d = %d", i+1, got)
+		}
+	}
+	if got := request("100.101.102.103", "203.0.113.60", "app.example.com"); got != http.StatusTooManyRequests {
+		t.Fatalf("rate-limited tailnet client = %d", got)
+	}
+	if got := request("100.101.102.104", "203.0.113.60", "app.example.com"); got != http.StatusUnauthorized {
+		t.Fatalf("other tailnet client = %d", got)
+	}
+}
+
+func TestLoginClientIPKeepsProxyRoutesSeparate(t *testing.T) {
+	s := &Server{Config: config.Config{TrustProxyHeader: true, TailscaleServeHost: "sample-vps.example.invalid"}}
+	for _, tc := range []struct {
+		host, remote, forwarded, realIP, want string
+	}{
+		{"sample-vps.example.invalid", "127.0.0.1:1234", "fd7a:115c:a1e0::123", "203.0.113.9", "fd7a:115c:a1e0::123"},
+		{"sample-vps.example.invalid", "127.0.0.1:1234", "100.101.102.103, 100.101.102.104", "203.0.113.9", "127.0.0.1"},
+		{"sample-vps.example.invalid", "127.0.0.1:1234", "203.0.113.8", "203.0.113.9", "127.0.0.1"},
+		{"app.example.com", "127.0.0.1:1234", "100.101.102.103", "203.0.113.9", "100.101.102.103"},
+		{"app.example.com", "127.0.0.1:1234", "198.51.100.10", "203.0.113.9", "203.0.113.9"},
+		{"sample-vps.example.invalid", "198.51.100.9:1234", "100.101.102.103", "203.0.113.9", "198.51.100.9"},
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/api/login", nil)
+		r.Host, r.RemoteAddr = tc.host, tc.remote
+		r.Header.Set("X-Forwarded-For", tc.forwarded)
+		r.Header.Set("X-Real-IP", tc.realIP)
+		if got := s.loginClientIP(r); got != tc.want {
+			t.Errorf("%s from %s = %q, want %q", tc.host, tc.remote, got, tc.want)
+		}
+	}
+}
+
 func TestLoginRateLimitIgnoresUntrustedProxyHeader(t *testing.T) {
 	hash, err := auth.HashPassword("correct horse battery staple")
 	if err != nil {
@@ -325,6 +384,10 @@ func TestEmbeddedPWAAssets(t *testing.T) {
 	if err != nil || len(assets) == 0 {
 		t.Fatalf("embedded JS assets = %v, %v", assets, err)
 	}
+	fonts, err := fs.Glob(web.Dist(), "assets/*.woff")
+	if err != nil || len(fonts) == 0 {
+		t.Fatalf("embedded WOFF assets = %v, %v", fonts, err)
+	}
 	for _, tc := range []struct {
 		path, contentType, cacheControl string
 	}{
@@ -334,6 +397,7 @@ func TestEmbeddedPWAAssets(t *testing.T) {
 		{"/icons/vpsdash-192.png", "image/png", "public, max-age=3600"},
 		{"/icons/vpsdash-512.png", "image/png", "public, max-age=3600"},
 		{"/" + assets[0], "text/javascript", "public, max-age=31536000, immutable"},
+		{"/" + fonts[0], "font/woff", "public, max-age=31536000, immutable"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			w := httptest.NewRecorder()

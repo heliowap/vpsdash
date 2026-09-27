@@ -58,6 +58,10 @@ func TestExampleInventoryIsValid(t *testing.T) {
 	if _, err := Load(filepath.Join("..", "..", "config.example.json")); err != nil {
 		t.Fatalf("example inventory: %v", err)
 	}
+	c := Config{Listen: "127.0.0.1:8484", TailscaleServeHost: "other.example.invalid", Hosts: []Host{{ID: "vps", TailnetName: "vps.example.invalid", Kind: "presence"}}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("Serve hostname outside inventory was accepted")
+	}
 }
 
 func TestLoadValidatesRunnerUnitAccount(t *testing.T) {

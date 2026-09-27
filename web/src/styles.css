@@ -144,7 +144,8 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
 .queue-row > svg:last-child { color: var(--muted); }
 .repo-sheet { margin: 0 0 15px; padding: 0 18px 4px; border: 1px solid var(--rule); background: var(--raised); border-radius: 10px; }
 .repo-sheet header { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 0 11px; }
-.repo-sheet h3 { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+.repo-sheet h3 { margin: 0; min-width: 0; font-size: 15px; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.repo-sheet header .state-stamp { max-width: 60%; white-space: normal; overflow-wrap: anywhere; text-transform: none; }
 .backend-row { display: grid; grid-template-columns: minmax(150px, 1fr) auto; gap: 10px; align-items: center; border-top: 1px solid var(--rule); padding: 13px 0; }
 .backend-row > div:first-child { display: grid; gap: 3px; }
 .backend-row strong { font-size: 13px; }
@@ -239,6 +240,8 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
   .row-copy strong { font-size: 14px; }
   .state-stamp { font-size: 10px; }
   .repo-sheet { padding-inline: 14px; }
+  .repo-sheet header { align-items: flex-start; flex-direction: column; }
+  .repo-sheet header .state-stamp { max-width: 100%; }
   .backend-row { grid-template-columns: 1fr; gap: 11px; }
   .backend-control select { width: 100%; }
   .backend-control { width: 100%; }

@@ -254,13 +254,15 @@ for host in config["hosts"]:
     name = dns.get(host["id"])
     if not name:
         raise SystemExit("Host ausente da tailnet: " + host["id"])
-    sample_name = host["tailnet_name"] == host["id"] + ".tailnet.ts.net"
+    sample_name = host["tailnet_name"].endswith(".example.invalid")
     host["tailnet_name"] = name
     if host["id"] != local_host_id and host["kind"] == "vps":
         if sample_name or not pathlib.Path(host.get("ssh_key_file", "")).is_file():
             host["kind"] = "presence"
             host.pop("ssh_user", None)
             # Keep the planned key path so another wizard run can offer SSH setup.
+config["tailscale_serve_host"] = status["Self"]["DNSName"].rstrip(".")
+config.setdefault("trust_proxy_header", True)
 owner = pwd.getpwnam("vpsdash")
 with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as output:
     json.dump(config, output, indent=2)

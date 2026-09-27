@@ -35,12 +35,13 @@ type RunnerUnitHost struct {
 }
 
 type Config struct {
-	Listen           string           `json:"listen"`
-	Database         string           `json:"database"`
-	TrustProxyHeader bool             `json:"trust_proxy_header,omitempty"`
-	Hosts            []Host           `json:"hosts"`
-	RunnerUnitHosts  []RunnerUnitHost `json:"runner_unit_hosts,omitempty"`
-	Repositories     []Repository     `json:"repositories"`
+	Listen             string           `json:"listen"`
+	Database           string           `json:"database"`
+	TrustProxyHeader   bool             `json:"trust_proxy_header,omitempty"`
+	TailscaleServeHost string           `json:"tailscale_serve_host,omitempty"`
+	Hosts              []Host           `json:"hosts"`
+	RunnerUnitHosts    []RunnerUnitHost `json:"runner_unit_hosts,omitempty"`
+	Repositories       []Repository     `json:"repositories"`
 }
 
 var safeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -93,6 +94,7 @@ func (c Config) Validate() error {
 	seenHosts := map[string]bool{}
 	hostKinds := map[string]string{}
 	seenKeys := map[string]bool{}
+	serveHostFound := c.TailscaleServeHost == ""
 	for _, h := range c.Hosts {
 		if !safeName.MatchString(h.ID) || h.TailnetName == "" {
 			return fmt.Errorf("invalid host: %q", h.ID)
@@ -102,6 +104,9 @@ func (c Config) Validate() error {
 		}
 		seenHosts[h.ID] = true
 		hostKinds[h.ID] = h.Kind
+		if strings.EqualFold(strings.TrimSuffix(h.TailnetName, "."), c.TailscaleServeHost) {
+			serveHostFound = true
+		}
 		if h.Kind != "vps" && h.Kind != "presence" {
 			return fmt.Errorf("invalid kind for host %s", h.ID)
 		}
@@ -117,6 +122,9 @@ func (c Config) Validate() error {
 			}
 			seenKeys[h.SSHKeyFile] = true
 		}
+	}
+	if !serveHostFound {
+		return errors.New("tailscale_serve_host must name a host in the inventory")
 	}
 	seenRunnerHosts := map[string]bool{}
 	for _, runner := range c.RunnerUnitHosts {

@@ -1,11 +1,13 @@
 {
   "listen": "127.0.0.1:8484",
   "database": "/home/vpsdash/vpsdash.db",
+  "trust_proxy_header": true,
+  "tailscale_serve_host": "sample-vps.example.invalid",
   "hosts": [
-    { "id": "intrador-tech-vps", "tailnet_name": "intrador-tech-vps.tailnet.ts.net", "kind": "vps", "ssh_user": "helio", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador-tech-vps" },
-    { "id": "allmedical-app", "tailnet_name": "allmedical-app.tailnet.ts.net", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_allmedical-app" },
-    { "id": "allmedical-mail", "tailnet_name": "allmedical-mail.tailnet.ts.net", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_allmedical-mail" },
-    { "id": "intrador", "tailnet_name": "intrador.tailnet.ts.net", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador" }
+    { "id": "intrador-tech-vps", "tailnet_name": "sample-vps.example.invalid", "kind": "vps", "ssh_user": "helio", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador-tech-vps" },
+    { "id": "allmedical-app", "tailnet_name": "sample-app.example.invalid", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_allmedical-app" },
+    { "id": "allmedical-mail", "tailnet_name": "sample-mail.example.invalid", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_allmedical-mail" },
+    { "id": "intrador", "tailnet_name": "sample-other.example.invalid", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador" }
   ],
   "runner_unit_hosts": [
     { "host_id": "intrador-tech-vps", "ssh_user": "gh-agents", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_gh-agents_intrador-tech-vps" }

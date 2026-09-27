@@ -95,8 +95,11 @@ sudo scripts/install-service.sh bin/vpsdash
 O script pode ser executado novamente após um novo build; ele atualiza o
 binário e a unit sem substituir `config.json` nem iniciar o serviço.
 
-Edite `config.json`: substitua o sufixo fictício `tailnet.ts.net`, ajuste
+Edite `config.json`: substitua os domínios fictícios `.example.invalid`, ajuste
 usuários SSH e liste somente repositórios instalados no GitHub App. Defina
+`tailscale_serve_host` com o DNS do próprio host mostrado por
+`tailscale status --json` em `Self.DNSName`. O assistente preenche esse campo
+automaticamente. Defina
 `agent_switchable` ou `ci_switchable` como `true` apenas depois de verificar
 que o workflow daquele repositório contém `vars.AGENT_RUNNER || ...` ou
 `vars.CI_RUNNER || ...`, respectivamente. Repositórios sem esse contrato não
@@ -204,16 +207,20 @@ app.example.com {
     header Strict-Transport-Security "max-age=31536000"
     reverse_proxy 127.0.0.1:8484 {
         header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
     }
 }
 ```
 
-O proxy deve sobrescrever `X-Real-IP` com o IP da conexão recebida; não
-encaminhe um valor fornecido pelo navegador. O serviço ignora esse cabeçalho
-por padrão, pois Tailscale Serve também acessa a porta de loopback. Ative
-`"trust_proxy_header": true` em `config.json` somente se **todas** as rotas
-de loopback passarem por um proxy que sobrescreve o cabeçalho, sem uma rota
-Tailscale Serve compartilhando a porta. O login limita cinco falhas por IP e
+O proxy deve sobrescrever `X-Real-IP` e `X-Forwarded-For` com o IP da conexão
+recebida; não encaminhe um valor fornecido pelo navegador. O exemplo habilita
+`"trust_proxy_header": true` para esse proxy. Mantenha a opção ativa somente
+quando o proxy público sobrescrever esses cabeçalhos. Com
+`tailscale_serve_host` configurado, o serviço identifica primeiro o IP da
+tailnet em `X-Forwarded-For`, que o Tailscale Serve sobrescreve. Ele usa esse
+IP mesmo se um cliente alterar `Host` e enviar um `X-Real-IP` falso.
+Assim, as duas rotas compartilham a porta local e mantêm limites por cliente.
+O login limita cinco falhas por IP e
 20 falhas globais em cinco minutos, além de duas verificações simultâneas.
 Se outro proxy estiver à frente do Caddy, configure a cadeia de proxies
 confiáveis antes de usar o IP do cliente. A página de login é pública;
@@ -300,8 +307,8 @@ go build -o /tmp/vpsdash ./cmd/vpsdash
 /tmp/vpsdash --version
 ```
 
-Os parsers têm fixtures capturadas em `intrador-tech-vps`, com nomes de
-tailnet sanitizados. Um teste de navegador do fluxo login → hosts → projetos
+Os parsers têm fixtures de formato Tailscale com nomes e domínios fictícios.
+Um teste de navegador do fluxo login → hosts → projetos
 está em `web/tests/overview.plan.json` para execução TestSprite com
 `--local 8484`. Chaves, senha, IDs de instalação e endereços reais ficam
 fora do repositório.

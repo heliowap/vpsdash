@@ -60,7 +60,7 @@ func TestParseTailnetStatus(t *testing.T) {
 	if len(devices) != 3 {
 		t.Fatalf("devices = %d", len(devices))
 	}
-	if devices[0].Name != "intrador-tech-vps" || !devices[0].Online {
+	if devices[0].Name != "sample-vps" || !devices[0].Online {
 		t.Errorf("self = %+v", devices[0])
 	}
 	if devices[2].Kind != "presence" || devices[2].Online {

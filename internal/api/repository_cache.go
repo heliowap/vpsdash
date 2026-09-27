@@ -6,18 +6,19 @@ import (
 )
 
 type repoVariableCache struct {
-	agent, ci  string
-	problem    string
-	updated    time.Time
-	refreshing bool
-	version    uint64
+	agent, ci           string
+	agentKnown, ciKnown bool
+	problem             string
+	updated             time.Time
+	refreshing          bool
+	version             uint64
 }
 
 // repositoryVariables never waits for GitHub on the dashboard request path.
 // One bounded refresh per repository updates the snapshot in the background.
-func (s *Server) repositoryVariables(repo string) (agent, ci, problem string) {
+func (s *Server) repositoryVariables(repo string) (agent, ci string, agentKnown, ciKnown bool, problem string) {
 	if s.GitHub == nil {
-		return "", "", "GitHub App não provisionado"
+		return "", "", false, false, "GitHub App não provisionado"
 	}
 	s.repoMu.Lock()
 	if s.repoCache == nil {
@@ -28,12 +29,12 @@ func (s *Server) repositoryVariables(repo string) (agent, ci, problem string) {
 		state = &repoVariableCache{}
 		s.repoCache[repo] = state
 	}
-	if !state.refreshing && (state.updated.IsZero() || time.Since(state.updated) >= time.Minute) {
+	if !state.refreshing && (state.updated.IsZero() || time.Since(state.updated) >= time.Minute || (state.problem == "" && (!state.agentKnown || !state.ciKnown))) {
 		state.refreshing = true
 		go s.refreshRepositoryVariables(repo, state.version)
 	}
-	agent, ci, problem = state.agent, state.ci, state.problem
-	if state.updated.IsZero() {
+	agent, ci, agentKnown, ciKnown, problem = state.agent, state.ci, state.agentKnown, state.ciKnown, state.problem
+	if state.updated.IsZero() || (state.problem == "" && (!state.agentKnown || !state.ciKnown)) {
 		problem = "GitHub em coleta"
 	}
 	s.repoMu.Unlock()
@@ -54,8 +55,9 @@ func (s *Server) refreshRepositoryVariables(repo string, version uint64) {
 	if state.version == version {
 		if err == nil {
 			state.agent, state.ci, state.problem = agent, ci, ""
+			state.agentKnown, state.ciKnown = true, true
 		} else {
-			state.problem = "GitHub indisponível"
+			state.problem = err.Error()
 		}
 		state.updated = time.Now()
 	}
@@ -76,12 +78,11 @@ func (s *Server) noteVariableSet(repo, variable, value string) {
 	state.version++ // Discard a read that started before the successful write.
 	if variable == "AGENT_RUNNER" {
 		state.agent = value
+		state.agentKnown = true
 	} else {
 		state.ci = value
+		state.ciKnown = true
 	}
-	if state.problem == "" && !state.updated.IsZero() {
-		state.updated = time.Now()
-	} else {
-		state.updated = time.Time{}
-	}
+	state.problem = ""
+	state.updated = time.Now()
 }
