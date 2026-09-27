@@ -6,7 +6,7 @@ import {
   Terminal, Wifi
 } from 'lucide-react'
 import { api, ApiError } from './api'
-import type { Dashboard, IncidentHistory, Metric, Project, ProjectIncident, Repository, Runner, Session } from './types'
+import type { Dashboard, IncidentHistory, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session } from './types'
 
 type Tab = 'overview' | 'projects' | 'fleet' | 'sessions'
 type Notice = { kind: 'error' | 'success'; message: string } | null
@@ -348,6 +348,67 @@ function RepoSwitch({ repo, variable, csrf, onRefresh }: { repo: Repository; var
   </div>
 }
 
+type MinutesState = { report: MinutesReport | null; error: string; loading: boolean }
+
+// Mirrors collect.RunnerBackend so the switch value can be matched to a row.
+function backendGroup(label: string) {
+  const value = label.trim().toLowerCase()
+  if (!value) return ''
+  if (value === 'self-hosted') return 'self-hosted'
+  if (value.startsWith('depot-')) return 'depot-*'
+  if (value.startsWith('ubicloud')) return 'ubicloud-*'
+  if (value === 'ubuntu-latest') return 'ubuntu-latest'
+  return 'outros'
+}
+
+const minuteFormat = new Intl.NumberFormat('pt-BR')
+
+function RepoMinutesBlock({ repo, state }: { repo: Repository; state: MinutesState }) {
+  const report = state.report
+  const entry = report?.repositories.find(item => item.repo === repo.name)
+  const now = Date.now() / 1000
+  const staleAfter = (report?.interval_s || 600) * 3
+  const collected = Boolean(entry?.collected_at)
+  const stale = collected && now - (entry?.collected_at || 0) > staleAfter
+  const unconfirmed = Boolean(state.error) && Boolean(report)
+  const partial = Boolean(entry && !entry.collected_at && entry.backends.length)
+  const inUse = (group: string) => [
+    ...(repo.agent_known && backendGroup(repo.agent_runner) === group ? ['agentes'] : []),
+    ...(repo.ci_known && backendGroup(repo.ci_runner) === group ? ['CI'] : [])
+  ]
+  let stamp: { text: string; tone: '' | 'stamp-bad' | 'stamp-unknown' }
+  let note = ''
+  if (!report) {
+    stamp = { text: state.error ? 'Indisponível' : 'Carregando', tone: state.error ? 'stamp-bad' : 'stamp-unknown' }
+    note = state.error ? `Leitura dos minutos indisponível — ${state.error}` : 'Buscando minutos coletados…'
+  } else if (!entry || (!entry.collected_at && !entry.attempted_at)) {
+    stamp = { text: 'Sem coleta', tone: 'stamp-unknown' }
+    note = report.collector_enabled ? `Ainda sem coleta. A primeira leitura dos jobs concluídos acontece em até ${Math.round(report.interval_s / 60)} min.` : 'Ainda sem coleta: o GitHub App não está provisionado.'
+  } else if (!entry.collected_at) {
+    stamp = { text: entry.error ? 'Falhou' : 'Parcial', tone: entry.error ? 'stamp-bad' : 'stamp-unknown' }
+    note = entry.error ? `A primeira coleta não terminou — ${entry.error}` : 'Primeira coleta em andamento. Os valores abaixo ainda não cobrem 30 dias.'
+  } else if (stale || unconfirmed) {
+    stamp = { text: unconfirmed ? 'Não confirmado' : 'Desatualizado', tone: 'stamp-bad' }
+    note = `Última coleta completa ${age(entry.collected_at)}.${entry.error ? ` ${entry.error}` : ''}${unconfirmed ? ' A atualização desta leitura falhou.' : ''}`
+  } else {
+    stamp = { text: `Coletado ${age(entry.collected_at)}`, tone: '' }
+    note = entry.error || ''
+  }
+  const total30 = entry?.backends.reduce((sum, item) => sum + item.minutes_30d, 0) || 0
+  const showRows = Boolean(entry && (collected || partial))
+  return <section className="minutes-block" aria-label={`Minutos por backend em ${repo.name}`}>
+    <header><div><strong>Minutos por backend</strong><small>Proxy de custo · duração dos jobs concluídos, arredondada por job</small></div><span className={`state-stamp ${stamp.tone}`}>{stamp.text}</span></header>
+    {note && <p className={`minutes-note ${stamp.tone === 'stamp-bad' ? 'is-attention' : ''}`}>{note}</p>}
+    {showRows && entry && (entry.backends.length ? <div className="minutes-list">{entry.backends.map(item => {
+      const used = inUse(item.backend)
+      return <div className="minutes-row" key={item.backend}>
+        <div className="minutes-subject"><strong>{item.backend}</strong><small>{item.jobs_30d} {item.jobs_30d === 1 ? 'job' : 'jobs'} em 30 d{used.length ? ` · em uso por ${used.join(' e ')}` : ''}</small></div>
+        <div className="minutes-measures"><span><b>{minuteFormat.format(item.minutes_7d)}</b><small>MIN · 7 D</small></span><span><b>{minuteFormat.format(item.minutes_30d)}</b><small>MIN · 30 D</small></span><span><b>{total30 ? `${Math.round(item.minutes_30d / total30 * 100)}%` : '—'}</b><small>DOS 30 D</small></span></div>
+      </div>
+    })}</div> : <p className="minutes-note">Nenhum job concluído nos últimos 30 dias.</p>)}
+  </section>
+}
+
 type SwitchVariable = 'AGENT_RUNNER' | 'CI_RUNNER'
 type SwitchTarget = { repo: string; variable: SwitchVariable; current: string; currentKnown: boolean }
 
@@ -379,6 +440,13 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
   const [bulkPending, setBulkPending] = useState(false)
   const [feedback, setFeedback] = useState<Notice>(null)
   const [busy, setBusy] = useState(false)
+  const [minutes, setMinutes] = useState<MinutesState>({ report: null, error: '', loading: true })
+  useEffect(() => {
+    let active = true
+    api.minutes().then(report => { if (active) setMinutes({ report, error: '', loading: false }) })
+      .catch(err => { if (active) setMinutes(previous => ({ report: previous.report, error: err instanceof Error ? err.message : 'Falha na leitura.', loading: false })) })
+    return () => { active = false }
+  }, [data])
   const selectable = data.repositories.filter(repo => canSwitch(repo, bulkVariable))
   const hasOperations = data.repositories.some(repo => canSwitch(repo, 'AGENT_RUNNER') || canSwitch(repo, 'CI_RUNNER'))
   const fleetObserved = data.fleet_seen_at > 0
@@ -411,7 +479,7 @@ function Fleet({ data, csrf, onRefresh, refreshFailed }: { data: Dashboard; csrf
       <section className="ledger-section"><div className="section-heading"><h2>Runners</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${data.runners.length} ${data.runners.length === 1 ? 'registrado' : 'registrados'}`}</span></div>{data.runners.length ? <div className="ruled-list">{data.runners.map(runner => <RunnerRow runner={runner} uncertain={fleetUncertain} key={`${runner.repo}-${runner.runner_id}`} />)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual dos runners não está disponível.' : 'Nenhum runner registrado nos repositórios consultados.'}</div>}</section>
       <section className="ledger-section"><div className="section-heading"><h2>Fila</h2><span className="section-count">{fleetUncertain ? 'contagem desconhecida' : `${queue.length} ${queue.length === 1 ? 'job' : 'jobs'}`}</span></div>{queue.length ? <div className="ruled-list">{queue.map(run => <a className="queue-row" key={`${run.repo}-${run.id}`} href={run.html_url} target="_blank" rel="noreferrer"><Clock3 size={18} /><span><strong>{run.display_title || run.name}</strong><small>{run.repo}</small></span><ArrowUpRight size={17} /></a>)}</div> : <div className="empty-line">{fleetUncertain ? 'A leitura atual da fila não está disponível.' : 'Nenhum job aguardando runner.'}</div>}</section>
     </>}
-    <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className={`state-stamp ${switchError(repo) ? 'stamp-bad' : 'stamp-unknown'}`}>{switchError(repo) || repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
+    <section className="ledger-section"><div className="section-heading"><div><h2>Backend por repositório</h2><p>Somente workflows com switch confirmado podem ser alterados aqui. Os minutos são um proxy para comparar backends, não a cobrança do GitHub.</p></div></div>{data.repositories.length ? data.repositories.map(repo => <article className="repo-sheet" key={repo.name}><header><h3>{repo.name}</h3>{repo.error && <span className={`state-stamp ${switchError(repo) ? 'stamp-bad' : 'stamp-unknown'}`}>{switchError(repo) || repo.error}</span>}</header><RepoSwitch repo={repo} variable="AGENT_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoSwitch repo={repo} variable="CI_RUNNER" csrf={csrf} onRefresh={onRefresh} /><RepoMinutesBlock repo={repo} state={minutes} /></article>) : <div className="empty-line">Adicione repositórios ao inventário para operar o switch.</div>}</section>
     {hasOperations && <>
       <section className="ledger-section">
         <div className="section-heading"><h2>Aplicar em lote</h2></div>

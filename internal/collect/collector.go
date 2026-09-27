@@ -38,6 +38,7 @@ type Collector struct {
 	Executor   HostExecutor
 	healthHTTP *http.Client
 	GitHub     FleetAPI
+	Minutes    MinutesAPI
 	mu         sync.RWMutex
 	hostLocks  map[string]*sync.Mutex
 	queued     map[string][]githubapp.WorkflowRun
@@ -81,7 +82,11 @@ func New(c config.Config, s *store.Store, github FleetAPI) *Collector {
 	for _, h := range c.Hosts {
 		locks[h.ID] = &sync.Mutex{}
 	}
-	return &Collector{Config: c, Store: s, Executor: NewExecutor(), healthHTTP: newHealthHTTPClient(c.Hosts), GitHub: github, hostLocks: locks, queued: map[string][]githubapp.WorkflowRun{}, errors: map[string]string{}}
+	collector := &Collector{Config: c, Store: s, Executor: NewExecutor(), healthHTTP: newHealthHTTPClient(c.Hosts), GitHub: github, hostLocks: locks, queued: map[string][]githubapp.WorkflowRun{}, errors: map[string]string{}}
+	if minutes, ok := github.(MinutesAPI); ok {
+		collector.Minutes = minutes
+	}
+	return collector
 }
 
 func (c *Collector) Start(ctx context.Context) error {
@@ -96,6 +101,7 @@ func (c *Collector) Start(ctx context.Context) error {
 		go c.runnerUnitLoop(ctx, runnerHost)
 	}
 	go c.fleetLoop(ctx)
+	go c.minutesLoop(ctx)
 	go c.maintenanceLoop(ctx)
 	for _, h := range c.Config.Hosts {
 		if h.Kind == "vps" {

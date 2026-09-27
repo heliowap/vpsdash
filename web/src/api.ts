@@ -1,4 +1,4 @@
-import type { Dashboard, IncidentHistory, Metric } from './types'
+import type { Dashboard, IncidentHistory, Metric, MinutesReport } from './types'
 
 export type SessionState = { authenticated: boolean; csrf: string }
 
@@ -23,6 +23,7 @@ export const api = {
   login: (password: string) => request<SessionState>('/api/login', { method: 'POST', body: JSON.stringify({ password }) }),
   logout: (csrf: string) => request<SessionState>('/api/logout', { method: 'POST' }, csrf),
   dashboard: () => request<Dashboard>('/api/dashboard'),
+  minutes: () => request<MinutesReport>('/api/minutes'),
   metrics: (id: string) => request<Metric[]>(`/api/hosts/${encodeURIComponent(id)}/metrics`),
   projectIncidents: (id: number) => request<IncidentHistory>(`/api/projects/${id}/incidents`),
   updateProject: (id: number, body: { monitored: boolean; health_url: string; expected: string[] }, csrf: string) =>

@@ -173,6 +173,24 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
 .inline-confirm > div { display: flex; gap: 5px; }
 .inline-feedback { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--action); }
 .inline-feedback.is-error { color: var(--attention); }
+.minutes-block { border-top: 1px solid var(--rule); padding: 14px 0 12px; }
+.minutes-block > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.minutes-block > header > div { display: grid; gap: 3px; min-width: 0; }
+.minutes-block > header strong { font-size: 13px; }
+.minutes-block > header small { color: var(--muted); font-size: 12px; }
+.minutes-block > header .state-stamp { text-transform: none; letter-spacing: .02em; }
+.minutes-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.minutes-note.is-attention { color: var(--attention); }
+.minutes-list { margin-top: 8px; }
+.minutes-row { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(250px, 1.2fr); gap: 14px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--rule); }
+.minutes-row:last-child { border-bottom: 0; }
+.minutes-subject { display: grid; gap: 3px; min-width: 0; }
+.minutes-subject strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.minutes-subject small { color: var(--muted); font-size: 12px; }
+.minutes-measures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.minutes-measures span { display: grid; gap: 2px; text-align: right; }
+.minutes-measures b { font: 500 16px 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+.minutes-measures small { font-size: 10px; letter-spacing: .075em; color: var(--muted); font-weight: 700; }
 .bulk-panel { display: grid; gap: 17px; padding: 21px; background: var(--raised); border: 1px solid var(--rule); border-radius: 10px; }
 .bulk-panel fieldset { border: 0; border-top: 1px solid var(--rule); padding: 11px 0 0; margin: 0; display: grid; gap: 7px; }
 .bulk-panel legend { font-size: 12px; font-weight: 600; color: var(--muted); padding-right: 9px; }
@@ -265,6 +283,10 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
   .backend-control select { width: 100%; }
   .backend-control { width: 100%; }
   .inline-confirm { display: grid; }
+  .minutes-row { grid-template-columns: 1fr; gap: 8px; }
+  .minutes-measures { gap: 6px; }
+  .minutes-measures span { text-align: left; }
+  .minutes-measures b { font-size: 15px; }
   .preset-row { align-items: start; }
   .preset-confirm { flex-wrap: wrap; justify-content: flex-end; }
 }
