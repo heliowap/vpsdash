@@ -283,7 +283,7 @@ Emenda de 2026-09-27 (issues #5, #6 e #14). Decisões do dono:
 - **Snippets.** Lista fixa `{name, argv, timeout_seconds?}` por host no
   inventário; o pedido traz só o nome. `argv` vai palavra a palavra entre
   aspas simples; timeout padrão 30 s (máx. 300 s), saída limitada a 64 KiB.
-- **Auditoria.** Migração 5:
+- **Auditoria.** Migração 11:
 
 ```sql
 CREATE TABLE audit_log (
