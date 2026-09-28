@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { api, ApiError } from './api'
 import { disablePush, enablePush, forgetLocalSubscription, readPushState, type PushSnapshot } from './push'
-import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session, UnitOp } from './types'
+import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session, SessionFocus, UnitOp } from './types'
 import { Files, type FileLocation } from './Files'
 import { AuditLedger, InteractiveSessions, PublicRouteNote } from './Interactive'
 import { agentStateLabel, emptySessionsText } from './sessionState'
@@ -30,8 +30,20 @@ const tabs: { id: Tab; label: string; Icon: typeof Activity }[] = [
 ]
 
 function tabFromHash(): Tab {
-  const id = window.location.hash.slice(1)
+  const id = window.location.hash.slice(1).split('?')[0]
   return tabs.some(tab => tab.id === id) ? id as Tab : 'overview'
+}
+
+// A notification for a waiting agent opens #sessions?host=…&session=…; the
+// Sessions page then scrolls to that row and opens its reply controls.
+function focusFromHash(): SessionFocus | null {
+  const hash = window.location.hash.slice(1)
+  const mark = hash.indexOf('?')
+  if (mark < 0 || hash.slice(0, mark) !== 'sessions') return null
+  const params = new URLSearchParams(hash.slice(mark + 1))
+  const host = params.get('host') || ''
+  const session = params.get('session') || ''
+  return host && session ? { host, session } : null
 }
 
 function age(timestamp?: number) {
@@ -860,16 +872,29 @@ function RunnerRow({ runner, uncertain, planned }: { runner: Runner; uncertain: 
   return <div className="runner-row"><span className={`status-dot ${uncertain || plannedStop ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain || plannedStop ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : plannedStop ? planned === 'drain' ? 'Drenado' : planned === 'unconfirmed' ? 'Não confirmado' : 'Reiniciando' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
 }
 
-function Sessions({ data, csrf, refreshFailed }: { data: Dashboard; csrf: string; refreshFailed: boolean }) {
+function isFocused(session: Session, focus: SessionFocus | null) {
+  return Boolean(focus && focus.host === session.host_id && focus.session === session.name)
+}
+
+function Sessions({ data, csrf, refreshFailed, focus }: { data: Dashboard; csrf: string; refreshFailed: boolean; focus: SessionFocus | null }) {
   const collectionUncertain = !sessionCollectionCurrent(data, refreshFailed)
   const uncertain = (session: Session) => refreshFailed || sessionUncertain(session, data)
-  if (data.private) return <div className="page-body"><div className="page-title"><h1>Sessões e acesso</h1><p>tmux mantém seus agentes vivos no host. Pela tailnet, você abre o terminal, acompanha uma sessão ou executa um comando fixo do inventário.</p></div>
-    <InteractiveSessions data={data} csrf={csrf} uncertain={uncertain} collectionUncertain={collectionUncertain} age={age} /></div>
+  const focusFound = Boolean(focus && data.sessions.some(session => isFocused(session, focus)))
+  useEffect(() => {
+    if (!focusFound) return
+    document.querySelector('[data-focused="true"]')?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  }, [focus, focusFound])
+  const missingFocus = focus && !focusFound && <p className="notice notice-error" role="status"><AlertCircle size={18} />A sessão {focus.session} em {focus.host} não aparece na última leitura. Ela pode ter terminado.</p>
+  if (data.private) return <div className="page-body"><div className="page-title"><h1>Sessões e acesso</h1><p>tmux mantém seus agentes vivos no host. Pela tailnet, você abre o terminal, acompanha uma sessão, responde a um prompt ou executa um comando fixo do inventário.</p></div>
+    {missingFocus}
+    <InteractiveSessions data={data} csrf={csrf} uncertain={uncertain} collectionUncertain={collectionUncertain} age={age} focus={focus} /></div>
   return <div className="page-body"><div className="page-title"><h1>Sessões</h1><p>tmux mantém seus agentes vivos no host. O processo em cada pane identifica o agente; tela e CPU entre duas leituras sugerem se ele trabalha, espera input ou está ocioso.</p></div>
     <PublicRouteNote />
+    {missingFocus}
     <section className="ledger-section"><div className="section-heading"><h2>Últimas sessões observadas</h2><span className="section-count">{data.sessions.length}</span></div>{data.sessions.length ? <div className="ruled-list">{data.sessions.map((session: Session) => {
     const unsure = uncertain(session)
-    return <div className="session-row" key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {unsure ? 'última leitura ' : ''}{age(session.seen_at)}</small></div><span className={`state-stamp ${unsure ? 'stamp-unknown' : ''}`}>{unsure ? 'Não confirmado' : agentStateLabel(session)}</span></div>
+    const focused = isFocused(session, focus)
+    return <div className={`session-row ${focused ? 'is-focused' : ''}`} data-focused={focused || undefined} key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {unsure ? 'última leitura ' : ''}{age(session.seen_at)}</small></div><span className={`state-stamp ${unsure ? 'stamp-unknown' : ''}`}>{unsure ? 'Não confirmado' : agentStateLabel(session)}</span></div>
   })}</div> : <div className="empty-line">{emptySessionsText(collectionUncertain)}</div>}</section>
     <AuditLedger refreshKey={0} /></div>
 }
@@ -879,6 +904,7 @@ export default function App() {
   const [data, setData] = useState<Dashboard | null>(null)
   const [histories, setHistories] = useState<Record<string, Metric[]>>({})
   const [tab, setTabState] = useState<Tab>(tabFromHash)
+  const [focus, setFocus] = useState<SessionFocus | null>(focusFromHash)
   const [fileLocation, setFileLocation] = useState<FileLocation>(null)
   const [notice, setNotice] = useState<Notice>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -925,18 +951,20 @@ export default function App() {
 
   const setTab = useCallback((next: Tab) => {
     setTabState(next)
+    setFocus(null)
     window.history.replaceState(null, '', next === 'overview' ? window.location.pathname : `#${next}`)
   }, [])
   // Notifications open the tab named in their URL hash; the service worker
   // posts that URL to a window that is already open.
   useEffect(() => {
-    const onHash = () => setTabState(tabFromHash())
+    const onHash = () => { setTabState(tabFromHash()); setFocus(focusFromHash()) }
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type !== 'vpsdash:navigate' || typeof event.data.url !== 'string') return
       const url = new URL(event.data.url, window.location.origin)
       if (url.origin !== window.location.origin) return
       window.history.replaceState(null, '', url.pathname + url.hash)
       setTabState(tabFromHash())
+      setFocus(focusFromHash())
     }
     window.addEventListener('hashchange', onHash)
     navigator.serviceWorker?.addEventListener('message', onMessage)
@@ -972,7 +1000,7 @@ export default function App() {
     <div className="main-wrap"><header className="top-bar"><div className="mobile-brand"><Activity size={19} strokeWidth={2.5} /><strong>vpsdash</strong></div><div className="top-context"><span className="top-context-title">Central de comando</span><span className="top-context-sub">Observação em tempo real</span></div><div className="top-actions"><button className={`icon-button ${refreshing ? 'is-spinning' : ''}`} type="button" onClick={() => void refresh()} aria-label="Atualizar dados" title="Atualizar dados"><RefreshCw size={19} /></button><button className="icon-button" type="button" onClick={() => void logout()} aria-label="Sair" title="Sair"><LogOut size={19} /></button></div></header>
       <main className="content"><div className="content-inner">
         {notice && <div className={`notice notice-${notice.kind}`} role="alert"><AlertCircle size={18} />{notice.message}</div>}
-        {data ? current === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} csrf={session.csrf} /> : current === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : current === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : current === 'files' ? <Files roots={data.file_roots || {}} location={fileLocation} onNavigate={setFileLocation} onUnauthorized={expireSession} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} csrf={session.csrf} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
+        {data ? current === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} csrf={session.csrf} /> : current === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : current === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : current === 'files' ? <Files roots={data.file_roots || {}} location={fileLocation} onNavigate={setFileLocation} onUnauthorized={expireSession} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} csrf={session.csrf} focus={focus} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
         {data && !data.smtp_provisioned && current !== 'overview' && <div className="service-note"><AlertCircle size={16} /><span>Canal de alerta por e-mail não provisionado. Eventos ficam enfileirados.</span></div>}
       </div></main>
     </div>

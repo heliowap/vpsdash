@@ -1,4 +1,4 @@
-import type { AuditEntry, Dashboard, FileContent, FileListing, IncidentHistory, InteractiveInfo, JobList, JobLog, Metric, MinutesReport, SnippetResult, TerminalRequest, UnitOp } from './types'
+import type { AuditEntry, Dashboard, FileContent, FileListing, IncidentHistory, InteractiveInfo, JobList, JobLog, Metric, MinutesReport, Reply, SnippetResult, TerminalRequest, UnitOp } from './types'
 
 export type SessionState = { authenticated: boolean; csrf: string; private?: boolean }
 
@@ -55,5 +55,7 @@ export const api = {
   stepUp: (password: string, csrf: string) => request<{ step_up_until: number }>('/api/step-up', { method: 'POST', body: JSON.stringify({ password }) }, csrf),
   terminalTicket: (body: TerminalRequest, csrf: string) => request<{ ticket: string; local_command: string }>('/api/terminal/tickets', { method: 'POST', body: JSON.stringify(body) }, csrf),
   runSnippet: (host: string, name: string, csrf: string) =>
-    request<SnippetResult>(`/api/hosts/${encodeURIComponent(host)}/snippets/run`, { method: 'POST', body: JSON.stringify({ name }) }, csrf)
+    request<SnippetResult>(`/api/hosts/${encodeURIComponent(host)}/snippets/run`, { method: 'POST', body: JSON.stringify({ name }) }, csrf),
+  sendKeys: (host: string, session: string, reply: Reply, csrf: string) =>
+    request<{ sent: boolean; state: string }>(`/api/hosts/${encodeURIComponent(host)}/sessions/send-keys`, { method: 'POST', body: JSON.stringify({ session, ...reply, confirm: true }) }, csrf)
 }

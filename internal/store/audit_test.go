@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -35,5 +37,46 @@ func TestAuditRecordsNewestFirstAndPrunesAfter90Days(t *testing.T) {
 	entries, err = s.RecentAudit(ctx, 10)
 	if err != nil || len(entries) != 1 || entries[0].Action != "snippet" {
 		t.Fatalf("after prune = %+v, %v", entries, err)
+	}
+}
+
+func TestAuditMigrationKeepsRowsAndAcceptsSendKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vpsdash.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 11; i++ {
+		if _, err := db.Exec(migrations[i]); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO schema_migrations(version) VALUES (?)`, i+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO audit_log(ts,action,host_id,target,client_ip,outcome) VALUES (10,'attach_ro','vps','dev','100.64.0.2','ok')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.RecordAudit(ctx, AuditEntry{Action: "send_keys", HostID: "vps", Target: "dev", ClientIP: "100.64.0.2", Outcome: "ok"}, time.Unix(20, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordAudit(ctx, AuditEntry{Action: "type", Outcome: "ok"}, time.Unix(30, 0)); err == nil {
+		t.Fatal("unknown audit action accepted after migration")
+	}
+	entries, err := s.RecentAudit(ctx, 10)
+	if err != nil || len(entries) != 2 || entries[0].Action != "send_keys" || entries[1].Action != "attach_ro" || entries[1].Target != "dev" {
+		t.Fatalf("entries = %+v, %v", entries, err)
 	}
 }

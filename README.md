@@ -29,7 +29,9 @@ notificações push na visão geral (§Web Push). A lista tmux detecta o agente 
 sugere seu estado (trabalhando, esperando input ou ociosa) a partir da tela e
 da CPU do pane entre duas leituras. Pelo endereço privado da tailnet, a página
 Sessões abre um terminal web (xterm.js sobre WebSocket até um PTY SSH), o
-attach tmux somente leitura com um clique e os comandos fixos de cada host;
+attach tmux somente leitura com um clique, a resposta a um agente que espera
+input (send-keys, inclusive a partir da notificação push) e os comandos fixos
+de cada host;
 veja [Terminal, attach e comandos](#terminal-attach-e-comandos-rota-privada).
 A interface não afirma
 que um host está saudável antes da primeira leitura.
@@ -404,8 +406,8 @@ para `private_listen`.
 O painel tem dois listeners em loopback. `listen` recebe o proxy público e
 serve login, leitura e o switch de runners. `private_listen` recebe apenas o
 Tailscale Serve e acrescenta as rotas interativas: `/api/step-up`,
-`/api/interactive`, `/api/terminal/tickets`, `/api/terminal/ws` e
-`/api/hosts/{id}/snippets/run`. Essas rotas não existem no mux público, que
+`/api/interactive`, `/api/terminal/tickets`, `/api/terminal/ws`,
+`/api/hosts/{id}/snippets/run` e `/api/hosts/{id}/sessions/send-keys`. Essas rotas não existem no mux público, que
 responde `404` mesmo com sessão válida; nenhum cabeçalho muda essa decisão.
 Pela rota pública, a página Sessões explica que o terminal só está disponível
 pelo endereço privado.
@@ -425,6 +427,19 @@ O attach usa `tmux attach-session -r -t =<sessão>` (somente leitura) e só
 aceita sessões observadas pela coleta naquele host. Assumir o controle é uma
 segunda opção, com confirmação. "Terminal local" mostra o comando `ssh`
 equivalente para colar no seu terminal, com a sua própria chave.
+
+"Responder" abre, ao lado da sessão, respostas rápidas (`y`, `n`, `1`–`3`,
+Enter, Esc, setas, Tab) e um campo de texto de uma linha (até 200
+caracteres, sem caracteres de controle; Enter ao final só se você marcar).
+Antes do envio, uma confirmação mostra sessão, host e as teclas exatas; se a
+coleta não marca a sessão como esperando input, a confirmação avisa, mas não
+bloqueia. O painel exige que a sessão conste da última coleta daquele host,
+localiza o pane cujo processo a coleta observou e usa `tmux send-keys -l`
+pela chave interativa, com cada argumento entre aspas simples. O resultado
+fica escrito na linha: Enviado, Recusado ou Falhou. `C-c` não é oferecido. O
+`audit_log` registra `send_keys` com host e sessão, nunca as teclas. A
+notificação push de agente esperando input abre essa sessão já com a resposta
+aberta; pela rota pública, a página só mostra a nota da tailnet.
 
 O acesso interativo usa uma chave SSH por host, diferente de todas as chaves
 de coleta. A ponte `ssh-readonly.py` continua igual. Crie e autorize a chave

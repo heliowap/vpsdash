@@ -82,6 +82,7 @@ func (s *Server) registerInteractive(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/terminal/tickets", s.terminalTicket)
 	mux.HandleFunc("GET /api/terminal/ws", s.terminalSocket)
 	mux.HandleFunc("POST /api/hosts/{id}/snippets/run", s.runSnippet)
+	mux.HandleFunc("POST /api/hosts/{id}/sessions/send-keys", s.sendKeys)
 }
 
 func (s *Server) recordAudit(r *http.Request, action, hostID, target, outcome string) {
@@ -386,16 +387,8 @@ func (s *Server) terminalTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sessionObserved(ctx context.Context, hostID, name string) bool {
-	sessions, err := s.Store.Sessions(ctx)
-	if err != nil {
-		return false
-	}
-	for _, session := range sessions {
-		if session.HostID == hostID && session.Name == name {
-			return true
-		}
-	}
-	return false
+	_, ok := s.observedSession(ctx, hostID, name)
+	return ok
 }
 
 // sameOrigin requires the browser Origin to name the host the request was

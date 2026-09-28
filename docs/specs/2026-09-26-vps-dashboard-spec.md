@@ -177,7 +177,8 @@ tela e CPU estáveis entre duas leituras consecutivas do mesmo pane:
   presume estado.
 
 Heurística, não contrato: estado errado nunca bloqueia ação — send-keys
-(v2) exige confirmação no painel.
+exige confirmação no painel e só avisa quando a sessão não está `waiting`
+(§Send-keys).
 
 ## SMTP (`allmedical-mail` → it@intrador.com.br)
 
@@ -261,7 +262,8 @@ Emenda de 2026-09-27 (issues #5, #6 e #14). Decisões do dono:
   proxy público; `private_listen` (`127.0.0.1:8485`, desligado se ausente)
   atende só o Tailscale Serve. As rotas interativas (`/api/step-up`,
   `/api/interactive`, `/api/terminal/tickets`, `/api/terminal/ws`,
-  `/api/hosts/{id}/snippets/run`) existem apenas no mux privado; o público
+  `/api/hosts/{id}/snippets/run`, `/api/hosts/{id}/sessions/send-keys`)
+  existem apenas no mux privado; o público
   responde 404. Nenhum cabeçalho participa da decisão. `/api/session` e
   `/api/dashboard` informam `private` conforme o listener.
 - **Reautenticação.** Senha de novo antes de terminal, attach ou snippet;
@@ -292,7 +294,7 @@ Emenda de 2026-09-27 (issues #5, #6 e #14). Decisões do dono:
 CREATE TABLE audit_log (
   id        INTEGER PRIMARY KEY,
   ts        INTEGER NOT NULL,
-  action    TEXT NOT NULL,   -- step_up|terminal|attach_ro|attach_rw|snippet
+  action    TEXT NOT NULL,   -- step_up|terminal|attach_ro|attach_rw|snippet|send_keys (migração 12)
   host_id   TEXT NOT NULL DEFAULT '',
   target    TEXT NOT NULL DEFAULT '',   -- sessão tmux ou nome do snippet
   client_ip TEXT NOT NULL DEFAULT '',
@@ -301,6 +303,41 @@ CREATE TABLE audit_log (
 ```
 
   Nunca guarda teclas nem saída. Retenção de 90 dias na poda noturna.
+
+## Send-keys a partir da notificação (issue #11, rota privada)
+
+Responde a um prompt de agente sem abrir terminal. Mesmo contrato do
+terminal: só no mux privado, sessão, CSRF, reautenticação válida (10 min) e
+`audit_log`.
+
+- **Pedido.** `POST /api/hosts/{id}/sessions/send-keys` com
+  `{session, key | text, enter?, confirm: true}`. Sem `confirm`, 400. A
+  sessão precisa constar do último snapshot de `tmux_sessions` daquele host;
+  sessão desconhecida é 404.
+- **Allowlist.** `key` ∈ `Enter`, `Escape`, `Up`, `Down`, `Tab` (nomes de
+  tecla do tmux) ou `y`, `n`, `1`–`9` (literais, com `-l`). `C-c` fica de
+  fora: interrompe o agente em vez de responder, e `Escape` já dispensa o
+  prompt. `text`: até 200 caracteres, UTF-8, uma linha, sem C0, DEL, C1 nem
+  separadores U+2028/U+2029; Enter só com `enter: true`.
+- **Alvo.** Com a chave interativa (nunca a de coleta), o painel roda
+  `tmux list-panes -s -t =<sessão>: -F '#{pane_id} #{pane_pid}'` e escolhe o
+  pane cujo PID é o `pane_pid` coletado (o pane onde o agente foi
+  detectado). O `:` final é obrigatório: sem ele `list-panes -s` cai em
+  prefixo de nome. Pane ausente ou PID desconhecido é 409.
+- **Envio.** `tmux send-keys -t %<n> -l -- <texto>` (mais
+  `; send-keys -t %<n> Enter` quando pedido) ou `tmux send-keys -t %<n>
+  <tecla>`. Cada palavra vai entre aspas simples para o shell de login. O
+  tmux encerra um comando em argumento terminado por `;`, então um texto que
+  termina em `;` segue como `\;`.
+- **Estado.** O estado heurístico não bloqueia: fora de `waiting`, a
+  confirmação avisa e o servidor envia.
+- **Notificação.** O payload de `agent_waiting` traz `host`, `session` e
+  `url` `/#sessions?host=…&session=…` (mesma origem; o service worker mantém
+  a checagem de origem). A página rola até a sessão e abre a resposta; na
+  rota pública mostra a nota de que isso só existe pela tailnet.
+- **Auditoria.** `send_keys` com host, sessão observada e resultado
+  (`ok|denied|failed`); o alvo fica vazio quando a sessão não foi
+  observada. Teclas e texto nunca vão ao log nem ao `audit_log`.
 
 ## Acesso a arquivos (v0.2, issue #8)
 
