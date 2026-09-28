@@ -191,6 +191,21 @@ CREATE INDEX idx_push_deliveries_alert ON push_deliveries(alert_id);`,
   outcome TEXT NOT NULL CHECK(outcome IN ('ok','denied','failed','closed'))
 );
 CREATE INDEX idx_audit_log_ts ON audit_log(ts);`,
+	// Migration 12: send_keys joins the audit actions. SQLite cannot alter a
+	// CHECK constraint, so the table is rebuilt with its rows.
+	`CREATE TABLE audit_log_v12 (
+  id INTEGER PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('step_up','terminal','attach_ro','attach_rw','snippet','send_keys')),
+  host_id TEXT NOT NULL DEFAULT '',
+  target TEXT NOT NULL DEFAULT '',
+  client_ip TEXT NOT NULL DEFAULT '',
+  outcome TEXT NOT NULL CHECK(outcome IN ('ok','denied','failed','closed'))
+);
+INSERT INTO audit_log_v12(id,ts,action,host_id,target,client_ip,outcome) SELECT id,ts,action,host_id,target,client_ip,outcome FROM audit_log;
+DROP TABLE audit_log;
+ALTER TABLE audit_log_v12 RENAME TO audit_log;
+CREATE INDEX idx_audit_log_ts ON audit_log(ts);`,
 }
 
 func migrate(db *sql.DB) error {
