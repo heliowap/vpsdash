@@ -11,17 +11,23 @@ fixam comportamento visível e linguagem da interface.
   `X-Real-IP` a partir da conexão recebida e encaminha para essa porta; o
   login limita tentativas por cliente e globalmente. `private_listen`
   (`127.0.0.1:8485`, desligado quando ausente) recebe somente o Tailscale
-  Serve. Terminal, attach tmux e snippets são registrados apenas no mux do
-  listener privado; no público respondem 404. A decisão vem do listener que
-  recebeu a conexão, nunca de cabeçalhos. Nunca aponte o proxy público para
-  `private_listen`.
+  Serve. Terminal, attach tmux, snippets e send-keys são registrados apenas
+  no mux do listener privado; no público respondem 404. A decisão vem do
+  listener que recebeu a conexão, nunca de cabeçalhos. Nunca aponte o proxy
+  público para `private_listen`.
 - Toda ação interativa exige sessão, CSRF, reautenticação por senha válida
   por 10 minutos e ligada à sessão, e WebSocket com Origin igual ao Host;
   cada abertura, recusa e encerramento vai para `audit_log` (hora, ação,
   host, alvo, IP e resultado, nunca teclas ou saída). Attach é `tmux
   attach -r` por padrão; escrita pede confirmação explícita. Snippets vêm
   só do inventário (argv fixo, cada palavra entre aspas simples, sem
-  argumento do usuário).
+  argumento do usuário). Send-keys é a única escrita no tmux do `helio`
+  fora do attach com controle: pede confirmação explícita (`confirm`),
+  exige a sessão na última coleta daquele host, mira o pane cujo PID a
+  coleta observou e envia só uma tecla da allowlist (Enter, Escape, Up,
+  Down, Tab, y, n, 1-9; sem C-c) ou uma linha de até 200 caracteres sem
+  controle, com `send-keys -l --`, cada palavra entre aspas simples. O
+  `audit_log` registra `send_keys` com host e sessão, nunca as teclas.
 - Preserve o isolamento dos usuários `helio`, `gh-agents` e `vpsdash`. A
   coleta usa chaves com a ponte `ssh-readonly.py` (somente leitura,
   scripts aprovados por SHA-256) e não muda. O acesso interativo usa uma

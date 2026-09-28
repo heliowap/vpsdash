@@ -101,10 +101,14 @@ read-only tmux attach now ship on the private route). The phase B spec explicitl
 `v0.2` without a schema change.
 
 Shipped ahead of v2: Web Push via VAPID, run log tail, minutes-per-backend
-cost proxy, host command snippets (private route only), and per-project
-incident history.
+cost proxy, host command snippets (private route only), per-project
+incident history, and send-keys from notifications (private route only):
+an `agent_waiting` push opens Sessions focused on that session, where the
+operator answers the prompt with an allowlisted key or one line of text
+after a confirmation naming session, host and the exact keys. It is the
+only write into `helio`'s tmux besides the confirmed read-write attach.
 
-v2 (confirmed direction, not yet built): send-keys from notifications.
+v2: no confirmed item left unbuilt.
 
 Constraints: loopback bind plus HTTPS reverse proxy for the public address,
 with optional private Tailscale Serve access; HTTPS required for
