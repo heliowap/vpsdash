@@ -4,7 +4,7 @@ import { AlertCircle, Check, Copy, KeyRound, LockKeyhole, Play, SquareTerminal, 
 import '@xterm/xterm/css/xterm.css'
 import { api, ApiError } from './api'
 import type { AuditEntry, Dashboard, InteractiveHost, InteractiveInfo, Session, Snippet, SnippetResult, TerminalRequest } from './types'
-import { agentStateLabel } from './sessionState'
+import { agentStateLabel, emptySessionsText } from './sessionState'
 
 function clock(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -197,7 +197,7 @@ function SessionActions({ session, host, onOpen }: { session: Session; host?: In
   </>
 }
 
-export function InteractiveSessions({ data, csrf, uncertain, age }: { data: Dashboard; csrf: string; uncertain: (session: Session) => boolean; age: (ts?: number) => string }) {
+export function InteractiveSessions({ data, csrf, uncertain, collectionUncertain, age }: { data: Dashboard; csrf: string; uncertain: (session: Session) => boolean; collectionUncertain: boolean; age: (ts?: number) => string }) {
   const [info, setInfo] = useState<InteractiveInfo | null>(null)
   const [infoError, setInfoError] = useState('')
   const [stepUpUntil, setStepUpUntil] = useState(0)
@@ -264,7 +264,7 @@ export function InteractiveSessions({ data, csrf, uncertain, age }: { data: Dash
           <span className={`state-stamp ${unsure ? 'stamp-unknown' : ''}`}>{unsure ? 'Não confirmado' : agentStateLabel(session)}</span>
           <SessionActions session={session} host={hostsByID[session.host_id]} onOpen={write => request({ kind: 'terminal', request: { host: session.host_id, kind: 'attach', session: session.name, write, confirm_write: write }, title: `tmux ${session.name} · ${session.host_id}`, mode: write ? 'write' : 'read', localCommand: hostsByID[session.host_id]?.attach_commands[session.name] || '' })} />
         </div>
-      })}</div> : <div className="empty-line">Nenhuma sessão tmux observada. As sessões aparecem quando os hosts forem alcançados.</div>}
+      })}</div> : <div className="empty-line">{emptySessionsText(collectionUncertain)}</div>}
     </section>
     <AuditLedger refreshKey={auditKey} />
     {pending && <StepUpSheet csrf={csrf} reason={stepUpReason} onCancel={() => setPending(null)} onConfirmed={until => { setStepUpUntil(until); const action = pending; setPending(null); void execute(action) }} />}

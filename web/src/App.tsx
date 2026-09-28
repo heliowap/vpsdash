@@ -10,7 +10,7 @@ import { disablePush, enablePush, forgetLocalSubscription, readPushState, type P
 import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session, UnitOp } from './types'
 import { Files, type FileLocation } from './Files'
 import { AuditLedger, InteractiveSessions, PublicRouteNote } from './Interactive'
-import { agentStateLabel } from './sessionState'
+import { agentStateLabel, emptySessionsText } from './sessionState'
 
 type Tab = 'overview' | 'projects' | 'fleet' | 'sessions' | 'files'
 type Notice = { kind: 'error' | 'success'; message: string } | null
@@ -864,13 +864,13 @@ function Sessions({ data, csrf, refreshFailed }: { data: Dashboard; csrf: string
   const collectionUncertain = !sessionCollectionCurrent(data, refreshFailed)
   const uncertain = (session: Session) => refreshFailed || sessionUncertain(session, data)
   if (data.private) return <div className="page-body"><div className="page-title"><h1>Sessões e acesso</h1><p>tmux mantém seus agentes vivos no host. Pela tailnet, você abre o terminal, acompanha uma sessão ou executa um comando fixo do inventário.</p></div>
-    <InteractiveSessions data={data} csrf={csrf} uncertain={uncertain} age={age} /></div>
+    <InteractiveSessions data={data} csrf={csrf} uncertain={uncertain} collectionUncertain={collectionUncertain} age={age} /></div>
   return <div className="page-body"><div className="page-title"><h1>Sessões</h1><p>tmux mantém seus agentes vivos no host. O processo em cada pane identifica o agente; tela e CPU entre duas leituras sugerem se ele trabalha, espera input ou está ocioso.</p></div>
     <PublicRouteNote />
     <section className="ledger-section"><div className="section-heading"><h2>Últimas sessões observadas</h2><span className="section-count">{data.sessions.length}</span></div>{data.sessions.length ? <div className="ruled-list">{data.sessions.map((session: Session) => {
     const unsure = uncertain(session)
     return <div className="session-row" key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {unsure ? 'última leitura ' : ''}{age(session.seen_at)}</small></div><span className={`state-stamp ${unsure ? 'stamp-unknown' : ''}`}>{unsure ? 'Não confirmado' : agentStateLabel(session)}</span></div>
-  })}</div> : <div className="empty-line">{collectionUncertain ? 'Coleta de sessões indisponível. Ainda não há uma leitura confirmada.' : 'Nenhuma sessão tmux observada. As sessões aparecem quando os hosts forem alcançados.'}</div>}</section>
+  })}</div> : <div className="empty-line">{emptySessionsText(collectionUncertain)}</div>}</section>
     <AuditLedger refreshKey={0} /></div>
 }
 
