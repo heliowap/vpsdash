@@ -17,7 +17,9 @@ As units `actions.runner.*` e `gh-agents-cleanup.timer` da conta `gh-agents`
 entram automaticamente como projetos monitorados, sem promoção manual.
 
 O canal SMTP mostra "não provisionado" e mantém eventos pendentes enquanto
-`smtp.env` não existir. A lista tmux detecta o agente; o terminal web e o
+`smtp.env` não existir. A lista tmux detecta o agente e sugere seu estado
+(trabalhando, esperando input ou ociosa) a partir da tela e da CPU do pane
+entre duas leituras; o terminal web e o
 attach ficam para `v0.2`, conforme a especificação. A interface não afirma
 que um host está saudável antes da primeira leitura.
 
@@ -153,6 +155,13 @@ Para instalar e testar a ponte em um host remoto, use:
 ```bash
 sudo scripts/setup-remote-collector.sh <host-id> <usuario-ssh> <fingerprint-SHA256>
 ```
+
+Cada script de coleta é aceito pela ponte pelo seu SHA-256. Quando um script
+muda (por exemplo, a coleta de sessões), reinstale a ponte com
+`scripts/setup-local-collector.sh` e `scripts/setup-remote-collector.sh`
+antes de atualizar o binário; sem isso,
+a ponte recusa a nova leitura e o painel marca as sessões como não
+confirmadas.
 
 O painel executa cada coleta com timeout de 10 s. Windows entra apenas pela
 presença Tailscale, sem SSH.

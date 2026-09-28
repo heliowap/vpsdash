@@ -75,13 +75,17 @@ switch via GitHub Actions variables,
 including bulk apply and named presets; single-password auth. Alert events
 queue in SQLite while SMTP is unprovisioned.
 
+After `v0.1`, the session list also shows a heuristic agent state
+(working/waiting/idle), brought forward from v2. It is read-only and never
+blocks an action.
+
 Concept target beyond `v0.1`: file access; xterm.js terminal over SSH PTY;
 one-click read-only tmux attach; runner unit restart/drain; SMTP
 delivery. The phase B spec explicitly permits tmux attach and alerts in
 `v0.2` without a schema change.
 
 v2 (confirmed direction, not v1 scope): Web Push via VAPID, send-keys from
-notifications, agent session state (working/waiting/idle), run log streaming,
+notifications, run log streaming,
 minutes-per-backend cost proxy, command snippets, incident history.
 
 Constraints: loopback bind plus HTTPS reverse proxy for the public address,

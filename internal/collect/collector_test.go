@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -315,5 +316,56 @@ func TestHTTPHealthConnectionFailureIsAConfirmedFailure(t *testing.T) {
 	_, _, err = checkHTTP(ctx, client, url)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled collector probe = %v, want context cancellation", err)
+	}
+}
+
+type sessionScreens struct{ screens []string }
+
+func (p *sessionScreens) Run(_ context.Context, _ config.Host, script string) (string, error) {
+	if script != SessionsScript {
+		return "", errors.New("not collected in this test")
+	}
+	screen := p.screens[0]
+	p.screens = p.screens[1:]
+	return "agent\t100\tbash\t/srv\t%1\nshell\t200\tbash\t/srv\t%2\n--PROCESSES--\n100 1 Ss 0 bash bash\n101 100 Sl 9 codex codex exec\n200 1 Ss 0 bash bash\n--SCREENS--\n%1\t" + screen + "\t› \n%2\t7\t$\n", nil
+}
+func (p *sessionScreens) Check(context.Context, config.Host, string, string) (string, error) {
+	return "", nil
+}
+func (p *sessionScreens) Close() {}
+
+func TestSessionPollsClassifyAgentStateAcrossSamples(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(filepath.Join(t.TempDir(), "vpsdash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	h := config.Host{ID: "vps", TailnetName: "vps.example.ts.net", Kind: "vps"}
+	if err := s.UpsertHost(ctx, store.Host{ID: h.ID, TailnetName: h.TailnetName, Kind: h.Kind}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(config.Config{Hosts: []config.Host{h}}, s, nil)
+	c.Executor = &sessionScreens{screens: []string{"1", "1", "2"}}
+	state := hostPollState{lastMetrics: time.Unix(1<<40, 0), lastDiscovery: time.Unix(1<<40, 0)}
+	start := time.Now()
+	var observed [][]string
+	for i := 0; i < 3; i++ {
+		c.pollHost(ctx, h, start.Add(time.Duration(i)*time.Minute), &state)
+		sessions, err := s.Sessions(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := []string{}
+		for _, session := range sessions {
+			row = append(row, session.Name+"="+session.State)
+		}
+		observed = append(observed, row)
+	}
+	want := [][]string{{"agent=", "shell="}, {"agent=waiting", "shell="}, {"agent=working", "shell="}}
+	for i := range want {
+		if strings.Join(observed[i], ",") != strings.Join(want[i], ",") {
+			t.Fatalf("poll %d states = %v, want %v", i, observed[i], want[i])
+		}
 	}
 }

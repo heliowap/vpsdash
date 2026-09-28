@@ -1,3 +1,7 @@
-fixture	3620764	sleep	/home/helio/Projetos/vpsdash
+fixture	21258	sleep	/home/helio/Projetos/vpsdash	%0
 --PROCESSES--
-3620764 3620763 sleep           sleep 20
+      1       0 Ss          7 systemd         /usr/lib/systemd/systemd --system --deserialize=71
+  21257       1 Ss          0 tmux: server    tmux new-session -d -s fixture -c /home/helio/Projetos/vpsdash printf "Allow this command? (y/n) "; sleep 120
+  21258   21257 Ss+         0 sleep           sleep 120
+--SCREENS--
+%0	26582678	Allow this command? (y/n)

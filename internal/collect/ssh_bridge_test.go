@@ -22,6 +22,19 @@ func TestSSHBridgeApprovesRunnerUnitRead(t *testing.T) {
 	}
 }
 
+func TestSSHBridgeApprovesCollectorScripts(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ssh-readonly.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, script := range map[string]string{"metrics": MetricsScript, "discovery": DiscoveryScript, "sessions": SessionsScript} {
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(script)))
+		if !strings.Contains(string(contents), `"`+digest+`",  # `+name) {
+			t.Fatalf("%s script digest %s missing from forced SSH command", name, digest)
+		}
+	}
+}
+
 func TestRunnerBridgeRejectsOtherCollectorReads(t *testing.T) {
 	bridge := filepath.Join("..", "..", "scripts", "ssh-readonly.py")
 	command := func(script string) ([]byte, error) {

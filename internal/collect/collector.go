@@ -54,6 +54,7 @@ type hostPollState struct {
 	lastMetrics, lastDiscovery, lastSessions time.Time
 	previous                                 MetricsSnapshot
 	havePrevious                             bool
+	panes                                    map[string]PaneSample
 	circuit                                  hostCircuit
 }
 
@@ -184,7 +185,7 @@ func (c *Collector) pollHost(ctx context.Context, h config.Host, now time.Time, 
 		state.lastDiscovery = now
 	}
 	if now.Sub(state.lastSessions) >= time.Minute {
-		attempt("sessions", func() error { return c.pollSessions(ctx, h) })
+		attempt("sessions", func() error { return c.pollSessions(ctx, h, now, state) })
 		state.lastSessions = now
 	}
 	if commandSucceeded {
@@ -242,7 +243,7 @@ func (c *Collector) pollDiscovery(ctx context.Context, h config.Host) error {
 	return nil
 }
 
-func (c *Collector) pollSessions(ctx context.Context, h config.Host) error {
+func (c *Collector) pollSessions(ctx context.Context, h config.Host, now time.Time, state *hostPollState) error {
 	raw, err := c.Executor.Run(ctx, h, SessionsScript)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errHostCommand, err)
@@ -252,10 +253,20 @@ func (c *Collector) pollSessions(ctx context.Context, h config.Host) error {
 		return err
 	}
 	observed := make([]store.Session, 0, len(sessions))
+	panes := map[string]PaneSample{}
 	for _, session := range sessions {
-		observed = append(observed, store.Session{HostID: h.ID, Name: session.Name, PanePID: session.PanePID, CWD: session.CWD, Agent: session.Agent})
+		previous, havePrevious := state.panes[session.Name]
+		agentState := AgentState(previous, havePrevious, session, now)
+		if session.Agent != "" && session.Screen != "" {
+			panes[session.Name] = SampleOf(session, now)
+		}
+		observed = append(observed, store.Session{HostID: h.ID, Name: session.Name, PanePID: session.PanePID, CWD: session.CWD, Agent: session.Agent, State: agentState})
 	}
-	return c.Store.ReplaceSessions(ctx, h.ID, observed, time.Now())
+	if err := c.Store.ReplaceSessions(ctx, h.ID, observed, now); err != nil {
+		return err
+	}
+	state.panes = panes
+	return nil
 }
 
 func (c *Collector) tailnetLoop(ctx context.Context) {

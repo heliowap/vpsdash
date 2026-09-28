@@ -364,11 +364,17 @@ function RunnerRow({ runner, uncertain }: { runner: Runner; uncertain: boolean }
   return <div className="runner-row"><span className={`status-dot ${uncertain ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
 }
 
+const agentStateLabels: Record<string, string> = { working: 'Trabalhando', waiting: 'Esperando input', idle: 'Ociosa' }
+
+function agentStateLabel(session: Session) {
+  return (session.agent && session.state && agentStateLabels[session.state]) || 'Observada'
+}
+
 function Sessions({ data, refreshFailed }: { data: Dashboard; refreshFailed: boolean }) {
   const collectionUncertain = !sessionCollectionCurrent(data, refreshFailed)
-  return <div className="page-body"><div className="page-title"><h1>Sessões</h1><p>tmux mantém seus agentes vivos no host. O processo em cada pane identifica o agente.</p></div><section className="ledger-section"><div className="section-heading"><h2>Últimas sessões observadas</h2><span className="section-count">{data.sessions.length}</span></div>{data.sessions.length ? <div className="ruled-list">{data.sessions.map((session: Session) => {
+  return <div className="page-body"><div className="page-title"><h1>Sessões</h1><p>tmux mantém seus agentes vivos no host. O processo em cada pane identifica o agente; tela e CPU entre duas leituras sugerem se ele trabalha, espera input ou está ocioso.</p></div><section className="ledger-section"><div className="section-heading"><h2>Últimas sessões observadas</h2><span className="section-count">{data.sessions.length}</span></div>{data.sessions.length ? <div className="ruled-list">{data.sessions.map((session: Session) => {
     const uncertain = refreshFailed || sessionUncertain(session, data)
-    return <div className="session-row" key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {uncertain ? 'última leitura ' : ''}{age(session.seen_at)}</small></div><span className={`state-stamp ${uncertain ? 'stamp-unknown' : ''}`}>{uncertain ? 'Não confirmado' : 'Observada'}</span></div>
+    return <div className="session-row" key={`${session.host_id}-${session.name}`}><Terminal size={19} /><div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {uncertain ? 'última leitura ' : ''}{age(session.seen_at)}</small></div><span className={`state-stamp ${uncertain ? 'stamp-unknown' : ''}`}>{uncertain ? 'Não confirmado' : agentStateLabel(session)}</span></div>
   })}</div> : <div className="empty-line">{collectionUncertain ? 'Coleta de sessões indisponível. Ainda não há uma leitura confirmada.' : 'Nenhuma sessão tmux observada. As sessões aparecem quando os hosts forem alcançados.'}</div>}</section><div className="info-note"><CircleHelp size={18} /><p>O acesso ao terminal requer a chave SSH de leitura do usuário <code>vpsdash</code> no host de cada sessão.</p></div></div>
 }
 

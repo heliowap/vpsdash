@@ -97,7 +97,7 @@ CREATE TABLE tmux_sessions (
   pane_pid  INTEGER,
   cwd       TEXT,
   agent     TEXT,                          -- 'opencode'|'codex'|'claude'|NULL
-  state     TEXT,                          -- 'working'|'waiting'|'idle'|NULL (v2)
+  state     TEXT,                          -- 'working'|'waiting'|'idle'|NULL
   seen_at   INTEGER NOT NULL,
   PRIMARY KEY (host_id, name)
 );
@@ -161,13 +161,20 @@ Por pane tmux (`tmux list-panes -F '#{pane_pid} #{pane_current_command}'`)
 | codex | `comm=codex`, arg contém `app-server` ou `codex exec`/`codex resume` | idem |
 | claude | `comm=claude` ou `node` cujo argv contém `claude`/`@anthropic-ai/claude-code` | idem |
 
-Estado (v2): `tmux capture-pane -t <sessão> -p` (últimas ~20 linhas) +
-estado do processo (`R`/`S` em `/proc/<pid>/stat`):
+Estado (antecipado da v2): `tmux capture-pane -p` de cada pane (tela
+visível) + estado e CPU acumulada do processo (`ps -o stat=,times=`). O host
+devolve só o checksum da tela e a última linha não-vazia (até 160
+caracteres); o painel guarda apenas a amostra anterior em memória e nunca
+persiste o conteúdo do pane. Com uma leitura por minuto, "há ≥30 s" equivale a
+tela e CPU estáveis entre duas leituras consecutivas do mesmo pane:
 - `waiting` — pane parado num prompt de permissão/input (heurística:
   última linha não-vazia casa padrões `❯`, `(y/n)`, `Allow?`, `› ` e
   processo em `S` há ≥30 s).
-- `working` — CPU do pane >5% ou output mudando entre polls.
+- `working` — CPU da árvore do pane >5% ou output mudando entre polls
+  (tem precedência sobre `waiting`).
 - `idle` — demais casos.
+- `NULL` — primeira leitura, pane trocado ou sessão sem agente: o painel não
+  presume estado.
 
 Heurística, não contrato: estado errado nunca bloqueia ação — send-keys
 (v2) exige confirmação no painel.
