@@ -11,11 +11,6 @@ import (
 	"time"
 )
 
-func writeToken(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"token":"installation-token","expires_at":"2030-01-01T00:00:00Z"}`))
-}
-
 func TestJobLogTailDoesNotSendTokenToSignedURLHost(t *testing.T) {
 	log := strings.Repeat("linha antiga\n", 20) + "2026-09-27T10:00:00.0000000Z \x1b[32mok\x1b[0m <script>alert(1)</script>\n"
 	var blobAuth, blobRange string
