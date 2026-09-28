@@ -13,6 +13,11 @@ sessões, e até 90 dias de alertas enviados. A descoberta de projetos cria
 candidatos silenciosos; somente projetos promovidos são verificados e podem
 gerar alerta após três falhas. Runners e fila vêm da API do GitHub App. O
 switch altera as variáveis Actions do próprio repositório.
+Ao lado do switch, a Frota mostra minutos por backend (`self-hosted`,
+`ubuntu-latest`, `depot-*`, `ubicloud-*`, outros) em 7 e 30 dias como proxy
+de custo, não como cobrança. O coletor lê a cada 10 minutos os jobs de cada
+tentativa de run concluída uma única vez, guarda 30 dias em `job_minutes` e
+pausa ao restarem 500 requisições da API para preservar a frota e o switch.
 As units `actions.runner.*` e `gh-agents-cleanup.timer` da conta `gh-agents`
 entram automaticamente como projetos monitorados, sem promoção manual.
 

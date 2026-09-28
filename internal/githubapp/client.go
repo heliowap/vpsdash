@@ -31,6 +31,7 @@ type Client struct {
 	mu            sync.Mutex
 	tokens        map[string]cachedToken
 	tokenFlights  map[string]*tokenFlight
+	budgets       map[string]rateBudget
 }
 
 //go:embed api-version.txt
@@ -102,7 +103,7 @@ func New(appID int64, keyPEM []byte, installations map[string]int64, baseURL str
 	if baseURL == "" {
 		baseURL = "https://api.github.com"
 	}
-	return &Client{appID: appID, key: key, installations: installations, baseURL: strings.TrimSuffix(baseURL, "/"), http: httpClient, tokens: map[string]cachedToken{}, tokenFlights: map[string]*tokenFlight{}}, nil
+	return &Client{appID: appID, key: key, installations: installations, baseURL: strings.TrimSuffix(baseURL, "/"), http: httpClient, tokens: map[string]cachedToken{}, tokenFlights: map[string]*tokenFlight{}, budgets: map[string]rateBudget{}}, nil
 }
 
 func (c *Client) appJWT(now time.Time) (string, error) {
@@ -117,17 +118,22 @@ func (c *Client) appJWT(now time.Time) (string, error) {
 }
 
 func (c *Client) request(ctx context.Context, method, path, token string, body any, out any) (int, error) {
+	status, _, err := c.requestHeaders(ctx, method, path, token, body, out)
+	return status, err
+}
+
+func (c *Client) requestHeaders(ctx context.Context, method, path, token string, body any, out any) (int, http.Header, error) {
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		reader = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", strings.TrimSpace(apiVersion))
@@ -137,19 +143,19 @@ func (c *Client) request(ctx context.Context, method, path, token string, body a
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return resp.StatusCode, fmt.Errorf("GitHub API %s %s: %d %s", method, path, resp.StatusCode, strings.TrimSpace(string(message)))
+		return resp.StatusCode, resp.Header, fmt.Errorf("GitHub API %s %s: %d %s", method, path, resp.StatusCode, strings.TrimSpace(string(message)))
 	}
 	if out != nil {
 		if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(out); err != nil {
-			return resp.StatusCode, err
+			return resp.StatusCode, resp.Header, err
 		}
 	}
-	return resp.StatusCode, nil
+	return resp.StatusCode, resp.Header, nil
 }
 
 func (c *Client) token(ctx context.Context, owner string) (string, error) {

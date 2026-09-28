@@ -136,6 +136,23 @@ CREATE INDEX idx_alerts_pending ON alerts(channel, sent_at);`,
 	`ALTER TABLE alerts ADD COLUMN project_id INTEGER REFERENCES projects(id);
 ALTER TABLE alerts ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX idx_alerts_project_created ON alerts(project_id, created_at);`,
+	`CREATE TABLE job_minutes (
+  repo TEXT NOT NULL, job_id INTEGER NOT NULL, run_id INTEGER NOT NULL, run_attempt INTEGER NOT NULL,
+  backend TEXT NOT NULL, labels TEXT NOT NULL, runner_name TEXT,
+  started_at INTEGER NOT NULL, completed_at INTEGER NOT NULL, seconds INTEGER NOT NULL CHECK(seconds >= 0),
+  PRIMARY KEY(repo, job_id)
+);
+CREATE INDEX idx_job_minutes_repo_completed ON job_minutes(repo, completed_at);
+CREATE INDEX idx_job_minutes_completed ON job_minutes(completed_at);
+CREATE TABLE run_scans (
+  repo TEXT NOT NULL, run_id INTEGER NOT NULL, run_attempt INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, scanned_at INTEGER NOT NULL, PRIMARY KEY(repo, run_id, run_attempt)
+);
+CREATE INDEX idx_run_scans_created ON run_scans(created_at);
+CREATE TABLE minutes_cursor (
+  repo TEXT PRIMARY KEY, collected_at INTEGER NOT NULL DEFAULT 0, covered_since INTEGER NOT NULL DEFAULT 0,
+  attempted_at INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT ''
+);`,
 }
 
 func migrate(db *sql.DB) error {
@@ -354,6 +371,10 @@ func (s *Store) PruneHistory(ctx context.Context, now time.Time) error {
 		{`DELETE FROM metrics WHERE ts < ?`, now.Add(-30 * 24 * time.Hour).Unix()},
 		{`DELETE FROM checks WHERE ts < ?`, now.Add(-30 * 24 * time.Hour).Unix()},
 		{`DELETE FROM alerts WHERE sent_at > 0 AND sent_at < ?`, now.Add(-90 * 24 * time.Hour).Unix()},
+		{`DELETE FROM job_minutes WHERE completed_at < ?`, now.Add(-MinutesRetention).Unix()},
+		// Scans outlive their jobs by two days: the runs listing filters by
+		// creation date, so a pruned scan must never be listed again.
+		{`DELETE FROM run_scans WHERE created_at < ?`, now.Add(-MinutesRetention - 48*time.Hour).Unix()},
 	})
 }
 

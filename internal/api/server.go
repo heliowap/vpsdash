@@ -73,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	private := http.NewServeMux()
 	private.HandleFunc("GET /api/dashboard", s.dashboard)
 	private.HandleFunc("GET /api/hosts/{id}/metrics", s.metrics)
+	private.HandleFunc("GET /api/minutes", s.minutes)
 	private.HandleFunc("PATCH /api/projects/{id}", s.updateProject)
 	private.HandleFunc("GET /api/projects/{id}/incidents", s.projectIncidents)
 	private.HandleFunc("POST /api/repos/{owner}/{repo}/switch", s.switchRunner)
@@ -402,6 +403,31 @@ func (s *Server) projectIncidents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, 200, history)
+}
+
+// minutes reports job minutes per runner backend as a cost proxy. It reads only
+// the local store; the collector fills it in the background.
+func (s *Server) minutes(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	usage, err := s.Store.BackendMinutes(r.Context(), now)
+	if err != nil {
+		errorResponse(w, 500, "Não foi possível ler os minutos por backend.")
+		return
+	}
+	repos := make([]store.RepoMinutes, 0, len(s.Config.Repositories))
+	for _, cfg := range s.Config.Repositories {
+		view, ok := usage[cfg.Name]
+		if !ok {
+			view = store.RepoMinutes{Repo: cfg.Name, Backends: []store.BackendUsage{}}
+		}
+		repos = append(repos, view)
+	}
+	jsonResponse(w, 200, map[string]any{
+		"generated_at":      now.Unix(),
+		"collector_enabled": s.Collector != nil && s.Collector.Minutes != nil,
+		"interval_s":        int64(collect.MinutesInterval.Seconds()),
+		"repositories":      repos,
+	})
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
