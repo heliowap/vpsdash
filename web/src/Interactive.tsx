@@ -189,6 +189,13 @@ function ReplyPanel({ session, uncertain, busy, result, onSend, onClose }: { ses
   const [text, setText] = useState('')
   const [enter, setEnter] = useState(false)
   const [draft, setDraft] = useState<Reply | null>(null)
+  // Clear the typed text only once the host confirmed it; a failed send keeps it.
+  const sentText = useRef(false)
+  useEffect(() => {
+    if (!result) return
+    if (result.status === 'sent' && sentText.current) setText('')
+    sentText.current = false
+  }, [result])
   const textError = replyTextError(text)
   const waiting = session.state === 'waiting' && !uncertain
   const fieldID = `reply-${session.host_id}-${session.name}`.replace(/[^A-Za-z0-9_-]/g, '_')
@@ -215,7 +222,7 @@ function ReplyPanel({ session, uncertain, busy, result, onSend, onClose }: { ses
         <li>Teclas: <ReplyKeys reply={draft} /></li>
       </ul>
       {!waiting && <p className="reply-warning"><AlertCircle size={16} />{uncertain ? 'A última leitura desta sessão não está confirmada.' : `A coleta não marca esta sessão como esperando input (${agentStateLabel(session)}).`} Confira a tela antes de enviar.</p>}
-      <div className="preview-actions"><button className="button button-primary button-small" type="button" disabled={busy} onClick={() => { const reply = draft; setDraft(null); if ('text' in reply) setText(''); onSend(reply) }}><CornerDownLeft size={15} />Enviar teclas</button><button className="button button-plain button-small" type="button" onClick={() => setDraft(null)}>Cancelar</button></div>
+      <div className="preview-actions"><button className="button button-primary button-small" type="button" disabled={busy} onClick={() => { const reply = draft; setDraft(null); sentText.current = 'text' in reply; onSend(reply) }}><CornerDownLeft size={15} />Enviar teclas</button><button className="button button-plain button-small" type="button" onClick={() => setDraft(null)}>Cancelar</button></div>
     </div>}
     {busy && <p className="inline-feedback" role="status">Enviando…</p>}
     {!busy && result && <p className="reply-result" role={result.status === 'sent' ? 'status' : 'alert'}><span className={`state-stamp ${result.status === 'sent' ? '' : 'stamp-bad'}`}>{result.status === 'sent' ? 'Enviado' : result.status === 'refused' ? 'Recusado' : 'Falhou'}</span><span>{result.message}</span></p>}
