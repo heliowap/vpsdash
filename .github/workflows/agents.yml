@@ -27,9 +27,7 @@ permissions:
 
 jobs:
   agents:
-    # TEMPORARY — gh-agents branch under test (manual /oc review, heliowap/gh-agents#33).
-    # Back to @v1 once v1 moves.
-    uses: heliowap/gh-agents/.github/workflows/agents.yml@feat/manual-review
+    uses: heliowap/gh-agents/.github/workflows/agents.yml@v1
     # Only trusted PR commands enter concurrency. Otherwise an unrelated
     # comment can replace a pending /oc request; plain issues never run fix.
     # Reviews are manual: `/oc review` from any human in a private repo (only
@@ -77,4 +75,3 @@ jobs:
       # ChatGPT login on the runner host (vars.AGENT_OPENCODE_AUTH)
       model: openai/gpt-6-luna-fast#xhigh
       model_fallbacks: opencode/space-bunny-free
-      gh_agents_ref: feat/manual-review
