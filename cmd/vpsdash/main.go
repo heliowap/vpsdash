@@ -27,6 +27,7 @@ import (
 	"github.com/heliowap/vpsdash/internal/githubapp"
 	"github.com/heliowap/vpsdash/internal/store"
 	"github.com/heliowap/vpsdash/internal/web"
+	"github.com/heliowap/vpsdash/internal/webpush"
 	"golang.org/x/term"
 )
 
@@ -40,6 +41,8 @@ func main() {
 	var err error
 	if len(os.Args) > 1 && os.Args[1] == "init-auth" {
 		err = initAuth(os.Args[2:])
+	} else if len(os.Args) > 1 && os.Args[1] == "init-webpush" {
+		err = initWebPush(os.Args[2:])
 	} else if len(os.Args) > 1 && os.Args[1] == "check-config" {
 		err = checkConfig(os.Args[2:])
 	} else {
@@ -114,12 +117,51 @@ func initAuth(args []string) error {
 	return nil
 }
 
+// initWebPush writes a new VAPID key pair. It never replaces an existing
+// file: new keys invalidate every browser subscription.
+func initWebPush(args []string) error {
+	flags := flag.NewFlagSet("init-webpush", flag.ContinueOnError)
+	out := flags.String("out", defaultPath("webpush.env"), "private Web Push environment file")
+	subject := flags.String("subject", "", "VAPID contact, mailto: or https: URI")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	private, public, err := webpush.GenerateKeys()
+	if err != nil {
+		return err
+	}
+	if _, err := webpush.ParseKeys(private, public, *subject); err != nil {
+		return fmt.Errorf("informe -subject mailto:voce@example.com ou https://painel.example.com: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(*out), 0700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		return errors.New("web push file already exists; new keys would invalidate every subscribed device")
+	}
+	if err != nil {
+		return err
+	}
+	content := "VAPID_SUBJECT=" + *subject + "\nVAPID_PUBLIC_KEY=" + public + "\nVAPID_PRIVATE_KEY=" + private + "\n"
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Chaves VAPID salvas em %s (0600). Reinicie o serviço.\n", *out)
+	return nil
+}
+
 func serve(args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := flags.String("config", defaultPath("config.json"), "inventory configuration")
 	authPath := flags.String("auth-env", defaultPath("auth.env"), "private authentication environment file")
 	githubPath := flags.String("github-env", defaultPath("github-app.env"), "private GitHub App environment file")
 	smtpPath := flags.String("smtp-env", defaultPath("smtp.env"), "private SMTP environment file")
+	webpushPath := flags.String("webpush-env", defaultPath("webpush.env"), "private Web Push (VAPID) environment file")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -152,6 +194,10 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	push, err := loadWebPush(*webpushPath, st)
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	collector := collect.New(cfg, st, gh)
@@ -160,8 +206,10 @@ func serve(args []string) error {
 	}
 	defer collector.Close()
 	mailer.Start(ctx)
+	push.Start(ctx)
 	server := api.New(cfg, st, collector, gh, a)
 	server.SMTPProvisioned = mailer != nil
+	server.Push = push
 	server.Static = http.FS(web.Dist())
 	fileExecutor := collect.NewExecutor()
 	defer fileExecutor.Close()
@@ -233,4 +281,21 @@ func loadMailer(path string, st *store.Store) (*alerts.Mailer, error) {
 		return nil, err
 	}
 	return alerts.FromEnv(vars, st)
+}
+
+// loadWebPush returns nil when webpush.env does not exist; the panel then
+// reports that VAPID keys are not configured.
+func loadWebPush(path string, st *store.Store) (*webpush.Service, error) {
+	vars, err := config.ReadEnvFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	keys, err := webpush.FromEnv(vars)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return webpush.New(keys, st), nil
 }

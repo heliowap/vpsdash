@@ -1,11 +1,12 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
 import {
-  Activity, AlertCircle, ArrowUpRight, Boxes, Check, ChevronDown, ChevronRight,
-  CircleHelp, Clock3, GitBranch, LockKeyhole, LogOut, RefreshCw,
+  Activity, AlertCircle, ArrowUpRight, Bell, Boxes, Check, ChevronDown, ChevronRight,
+  CircleHelp, Clock3, GitBranch, LockKeyhole, LogOut, Mail, RefreshCw,
   FolderOpen, Terminal, Wifi
 } from 'lucide-react'
 import { api, ApiError } from './api'
+import { disablePush, enablePush, forgetLocalSubscription, readPushState, type PushSnapshot } from './push'
 import type { Dashboard, IncidentHistory, Job, JobList, JobLog, Metric, MinutesReport, Project, ProjectIncident, Repository, Runner, Session, UnitOp } from './types'
 import { Files, type FileLocation } from './Files'
 
@@ -25,6 +26,11 @@ const tabs: { id: Tab; label: string; Icon: typeof Activity }[] = [
   { id: 'sessions', label: 'Sessões', Icon: Terminal },
   { id: 'files', label: 'Arquivos', Icon: FolderOpen }
 ]
+
+function tabFromHash(): Tab {
+  const id = window.location.hash.slice(1)
+  return tabs.some(tab => tab.id === id) ? id as Tab : 'overview'
+}
 
 function age(timestamp?: number) {
   if (!timestamp) return 'sem leitura'
@@ -208,7 +214,71 @@ function incidents(data: Dashboard): Incident[] {
   return items
 }
 
-function Overview({ data, histories, refreshFailed }: { data: Dashboard; histories: Record<string, Metric[]>; refreshFailed: boolean }) {
+const pushCopy: Record<PushSnapshot['state'], { stamp: string; detail: React.ReactNode; tone: '' | 'stamp-bad' | 'stamp-unknown' }> = {
+  checking: { stamp: 'Verificando', detail: 'Consultando o navegador e o servidor…', tone: 'stamp-unknown' },
+  unsupported: { stamp: 'Não suportado', detail: 'Não suportado neste navegador. Use um navegador com Web Push por HTTPS.', tone: 'stamp-unknown' },
+  'install-required': { stamp: 'Instale o app', detail: 'No iPhone e no iPad, adicione o painel à tela inicial e abra-o por lá para receber notificações.', tone: 'stamp-unknown' },
+  'no-worker': { stamp: 'Indisponível', detail: 'O service worker do painel não está ativo. Recarregue a página e tente de novo.', tone: 'stamp-unknown' },
+  unconfigured: { stamp: 'Sem chaves', detail: <>Chaves VAPID não configuradas no servidor. Gere-as com <code>vpsdash init-webpush</code> e reinicie o serviço.</>, tone: 'stamp-unknown' },
+  denied: { stamp: 'Permissão negada', detail: 'Permissão negada. Libere as notificações deste site nas configurações do navegador.', tone: 'stamp-bad' },
+  off: { stamp: 'Desativadas', detail: 'Receba falhas de projetos, runners offline e agentes esperando input.', tone: 'stamp-unknown' },
+  on: { stamp: 'Ativas', detail: 'Este dispositivo recebe falhas de projetos, runners offline e agentes esperando input.', tone: '' }
+}
+
+function AlertChannels({ smtpProvisioned, csrf }: { smtpProvisioned: boolean; csrf: string }) {
+  const [push, setPush] = useState<PushSnapshot>({ state: 'checking' })
+  const [busy, setBusy] = useState(false)
+  const [feedback, setFeedback] = useState<Notice>(null)
+  useEffect(() => {
+    let active = true
+    readPushState(csrf).then(next => { if (active) setPush(next) }).catch(err => {
+      if (!active) return
+      setPush({ state: 'off' })
+      setFeedback({ kind: 'error', message: err instanceof Error ? err.message : 'Não foi possível verificar as notificações.' })
+    })
+    return () => { active = false }
+  }, [csrf])
+  async function run(action: () => Promise<PushSnapshot>, success?: string) {
+    setBusy(true); setFeedback(null)
+    try { const next = await action(); setPush(next); if (success && next.state === 'on') setFeedback({ kind: 'success', message: success }) }
+    catch (err) { setFeedback({ kind: 'error', message: err instanceof Error ? err.message : 'O navegador recusou a inscrição.' }) }
+    finally { setBusy(false) }
+  }
+  async function sendTest() {
+    if (!push.endpoint) return
+    setBusy(true); setFeedback(null)
+    try { await api.pushTest(push.endpoint, csrf); setFeedback({ kind: 'success', message: 'Notificação de teste enviada. Ela deve aparecer em instantes.' }) }
+    catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 410)) { await forgetLocalSubscription().catch(() => undefined); setPush({ state: 'off' }) }
+      setFeedback({ kind: 'error', message: err instanceof Error ? err.message : 'Teste não enviado.' })
+    } finally { setBusy(false) }
+  }
+  const copy = pushCopy[push.state]
+  return <section className="ledger-section" aria-labelledby="channels-heading">
+    <div className="section-heading"><div><h2 id="channels-heading">Canais de alerta</h2><p>Projetos monitorados alertam após três falhas seguidas.</p></div></div>
+    <div className="channel-list">
+      <div className="channel-row">
+        <Mail size={19} />
+        <div><strong>E-mail</strong><small>{smtpProvisioned ? 'Falhas de produção seguem para o endereço configurado em smtp.env.' : 'Não provisionado. Eventos ficam enfileirados até o SMTP ser configurado.'}</small></div>
+        <span className={`state-stamp ${smtpProvisioned ? '' : 'stamp-unknown'}`}>{smtpProvisioned ? 'Provisionado' : 'Pendente'}</span>
+      </div>
+      <div className="channel-row">
+        <Bell size={19} />
+        <div><strong>Notificações neste dispositivo</strong><small>{copy.detail}</small></div>
+        <span className={`state-stamp ${copy.tone}`}>{copy.stamp}</span>
+        {(push.state === 'off' || push.state === 'on') && <div className="channel-actions">
+          {push.state === 'off' ? <button className="button button-primary button-small" type="button" disabled={busy} onClick={() => void run(() => enablePush(csrf), 'Notificações ativadas neste dispositivo.')}>{busy ? 'Ativando…' : 'Ativar notificações'}</button> : <>
+            <button className="button button-small" type="button" disabled={busy} onClick={() => void sendTest()}>Enviar teste</button>
+            <button className="button button-plain button-small" type="button" disabled={busy} onClick={() => void run(() => disablePush(csrf))}>Desativar</button>
+          </>}
+        </div>}
+        {feedback && <p className={`inline-feedback ${feedback.kind === 'error' ? 'is-error' : ''}`} role={feedback.kind === 'error' ? 'alert' : 'status'}>{feedback.message}</p>}
+      </div>
+    </div>
+  </section>
+}
+
+function Overview({ data, histories, refreshFailed, csrf }: { data: Dashboard; histories: Record<string, Metric[]>; refreshFailed: boolean; csrf: string }) {
   const problems = useMemo(() => incidents(data), [data])
   const observedAt = Math.max(0, data.fleet_seen_at, ...data.hosts.map(host => host.seen_at || 0), ...data.projects.map(project => project.checked_at || 0), ...data.sessions.map(session => session.seen_at || 0))
   const observed = observedAt > 0
@@ -227,6 +297,7 @@ function Overview({ data, histories, refreshFailed }: { data: Dashboard; histori
     <section className="ledger-section overview-tail" aria-labelledby="activity-heading"><div className="section-heading"><div><h2 id="activity-heading">Em andamento</h2><p>Atividade recente da frota e das sessões.</p></div></div>
       <div className="activity-grid"><div><span className="activity-number">{fleetCurrent ? data.runners.filter(runner => runner.busy).length : '—'}</span><span>runners ocupados</span></div><div><span className="activity-number">{fleetCurrent ? Object.values(data.queued).flat().length : '—'}</span><span>jobs na fila</span></div><div><span className="activity-number">{sessionsCurrent ? data.sessions.length : '—'}</span><span>sessões tmux</span></div></div>
     </section>
+    <AlertChannels smtpProvisioned={data.smtp_provisioned} csrf={csrf} />
   </>
 }
 
@@ -805,7 +876,7 @@ export default function App() {
   const [session, setSession] = useState<{ authenticated: boolean; csrf: string } | null>(null)
   const [data, setData] = useState<Dashboard | null>(null)
   const [histories, setHistories] = useState<Record<string, Metric[]>>({})
-  const [tab, setTab] = useState<Tab>('overview')
+  const [tab, setTabState] = useState<Tab>(tabFromHash)
   const [fileLocation, setFileLocation] = useState<FileLocation>(null)
   const [notice, setNotice] = useState<Notice>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -850,6 +921,25 @@ export default function App() {
     } finally { if (version === refreshVersion.current) setRefreshing(false) }
   }, [session?.authenticated])
 
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next)
+    window.history.replaceState(null, '', next === 'overview' ? window.location.pathname : `#${next}`)
+  }, [])
+  // Notifications open the tab named in their URL hash; the service worker
+  // posts that URL to a window that is already open.
+  useEffect(() => {
+    const onHash = () => setTabState(tabFromHash())
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'vpsdash:navigate' || typeof event.data.url !== 'string') return
+      const url = new URL(event.data.url, window.location.origin)
+      if (url.origin !== window.location.origin) return
+      window.history.replaceState(null, '', url.pathname + url.hash)
+      setTabState(tabFromHash())
+    }
+    window.addEventListener('hashchange', onHash)
+    navigator.serviceWorker?.addEventListener('message', onMessage)
+    return () => { window.removeEventListener('hashchange', onHash); navigator.serviceWorker?.removeEventListener('message', onMessage) }
+  }, [])
   useEffect(() => { api.session().then(setSession).catch(() => setSession({ authenticated: false, csrf: '' })) }, [])
   useEffect(() => { if (!session?.authenticated) return; void refresh(); const timer = window.setInterval(() => void refresh(), 30_000); return () => window.clearInterval(timer) }, [refresh, session?.authenticated])
   useEffect(() => {
@@ -880,7 +970,7 @@ export default function App() {
     <div className="main-wrap"><header className="top-bar"><div className="mobile-brand"><Activity size={19} strokeWidth={2.5} /><strong>vpsdash</strong></div><div className="top-context"><span className="top-context-title">Central de comando</span><span className="top-context-sub">Observação em tempo real</span></div><div className="top-actions"><button className={`icon-button ${refreshing ? 'is-spinning' : ''}`} type="button" onClick={() => void refresh()} aria-label="Atualizar dados" title="Atualizar dados"><RefreshCw size={19} /></button><button className="icon-button" type="button" onClick={() => void logout()} aria-label="Sair" title="Sair"><LogOut size={19} /></button></div></header>
       <main className="content"><div className="content-inner">
         {notice && <div className={`notice notice-${notice.kind}`} role="alert"><AlertCircle size={18} />{notice.message}</div>}
-        {data ? current === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} /> : current === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : current === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : current === 'files' ? <Files roots={data.file_roots || {}} location={fileLocation} onNavigate={setFileLocation} onUnauthorized={expireSession} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
+        {data ? current === 'overview' ? <Overview data={data} histories={histories} refreshFailed={notice?.kind === 'error'} csrf={session.csrf} /> : current === 'projects' ? <Projects data={data} csrf={session.csrf} onRefresh={() => void refresh()} /> : current === 'fleet' ? <Fleet data={data} csrf={session.csrf} onRefresh={() => void refresh()} refreshFailed={notice?.kind === 'error'} /> : current === 'files' ? <Files roots={data.file_roots || {}} location={fileLocation} onNavigate={setFileLocation} onUnauthorized={expireSession} /> : <Sessions data={data} refreshFailed={notice?.kind === 'error'} /> : <div className="loading-ledger"><div className="loading-line" /><div className="loading-line short" /><p>Buscando a primeira leitura…</p></div>}
         {data && !data.smtp_provisioned && current !== 'overview' && <div className="service-note"><AlertCircle size={16} /><span>Canal de alerta por e-mail não provisionado. Eventos ficam enfileirados.</span></div>}
       </div></main>
     </div>

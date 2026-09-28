@@ -147,7 +147,7 @@ func TestRunnerUnitsStayMonitoredWhenAUnitDisappears(t *testing.T) {
 		t.Fatalf("missing runner was not marked unhealthy: %+v", runner)
 	}
 	alerts, err := s.PendingAlerts(ctx)
-	if err != nil || len(alerts) != 1 || alerts[0].Subject != "vps / actions.runner.owner-repo.owner--repo-1.service" {
+	if err != nil || len(alerts) != 1 || alerts[0].Subject != "vps / actions.runner.owner-repo.owner--repo-1.service" || alerts[0].Kind != store.AlertRunnerOffline {
 		t.Fatalf("alerts = %+v, %v", alerts, err)
 	}
 	if err := c.saveRunnerUnits(ctx, "vps", active, base.Add(4*time.Minute)); err != nil {

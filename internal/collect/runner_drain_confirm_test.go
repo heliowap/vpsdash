@@ -171,7 +171,7 @@ func TestUnconfirmedDrainOfRunningUnitCountsLaterFailures(t *testing.T) {
 	if err := c.saveRunnerUnits(ctx, "vps", failed, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if alerts, err := s.PendingAlerts(ctx); err != nil || len(alerts) != 1 || alerts[0].Kind != "project_down" || !strings.Contains(alerts[0].Subject, opsUnit) {
+	if alerts, err := s.PendingAlerts(ctx); err != nil || len(alerts) != 1 || alerts[0].Kind != store.AlertRunnerOffline || !strings.Contains(alerts[0].Subject, opsUnit) {
 		t.Fatalf("later genuine failure = %+v, %v", alerts, err)
 	}
 }

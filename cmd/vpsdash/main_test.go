@@ -90,3 +90,39 @@ func TestMissingGitHubAppKeepsDashboardAvailable(t *testing.T) {
 		t.Fatalf("dashboard repositories: %+v", body.Repositories)
 	}
 }
+
+func TestInitWebPushWritesPrivateKeysOnce(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "webpush.env")
+	if err := initWebPush([]string{"-out", path}); err == nil {
+		t.Fatal("missing VAPID subject accepted")
+	}
+	if err := initWebPush([]string{"-out", path, "-subject", "mailto:operador@example.invalid"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("webpush.env mode = %v, %v", info, err)
+	}
+	if err := initWebPush([]string{"-out", path, "-subject", "mailto:operador@example.invalid"}); err == nil {
+		t.Fatal("existing VAPID keys were replaced")
+	}
+	st, err := store.Open(filepath.Join(dir, "vpsdash.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	push, err := loadWebPush(path, st)
+	if err != nil || push == nil || push.Keys.Subject != "mailto:operador@example.invalid" {
+		t.Fatalf("loadWebPush = %+v, %v", push, err)
+	}
+	if push, err := loadWebPush(filepath.Join(dir, "missing.env"), st); err != nil || push != nil {
+		t.Fatalf("missing webpush.env = %+v, %v", push, err)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadWebPush(path, st); err == nil {
+		t.Fatal("group-readable webpush.env accepted")
+	}
+}

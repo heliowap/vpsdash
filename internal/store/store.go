@@ -170,6 +170,17 @@ CREATE TABLE minutes_cursor (
 CREATE INDEX idx_runner_unit_ops_unit ON runner_unit_ops(host_id, unit, id);`,
 	`ALTER TABLE checks ADD COLUMN planned INTEGER NOT NULL DEFAULT 0 CHECK(planned IN (0,1));`,
 	`ALTER TABLE runner_unit_ops ADD COLUMN stop_unconfirmed INTEGER NOT NULL DEFAULT 0 CHECK(stop_unconfirmed IN (0,1));`,
+	`CREATE TABLE push_subscriptions (
+  id INTEGER PRIMARY KEY, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE push_deliveries (
+  id INTEGER PRIMARY KEY, subscription_id INTEGER NOT NULL REFERENCES push_subscriptions(id),
+  alert_id INTEGER NOT NULL REFERENCES alerts(id), attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL, created_at INTEGER NOT NULL, last_error TEXT
+);
+CREATE INDEX idx_push_deliveries_due ON push_deliveries(next_attempt_at);
+CREATE INDEX idx_push_deliveries_alert ON push_deliveries(alert_id);`,
 }
 
 func migrate(db *sql.DB) error {
@@ -396,7 +407,7 @@ func (s *Store) PruneHistory(ctx context.Context, now time.Time) error {
 	return s.prune(ctx, []pruneQuery{
 		{`DELETE FROM metrics WHERE ts < ?`, now.Add(-30 * 24 * time.Hour).Unix()},
 		{`DELETE FROM checks WHERE ts < ?`, now.Add(-30 * 24 * time.Hour).Unix()},
-		{`DELETE FROM alerts WHERE sent_at > 0 AND sent_at < ?`, now.Add(-90 * 24 * time.Hour).Unix()},
+		{`DELETE FROM alerts WHERE sent_at > 0 AND sent_at < ? AND NOT EXISTS (SELECT 1 FROM push_deliveries WHERE alert_id=alerts.id)`, now.Add(-90 * 24 * time.Hour).Unix()},
 		{`DELETE FROM job_minutes WHERE completed_at < ?`, now.Add(-MinutesRetention).Unix()},
 		// Scans outlive their jobs by two days: the runs listing filters by
 		// creation date, so a pruned scan must never be listed again.

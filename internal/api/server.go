@@ -24,6 +24,7 @@ import (
 	"github.com/heliowap/vpsdash/internal/config"
 	"github.com/heliowap/vpsdash/internal/githubapp"
 	"github.com/heliowap/vpsdash/internal/store"
+	"github.com/heliowap/vpsdash/internal/webpush"
 )
 
 type GitHub interface {
@@ -44,20 +45,22 @@ type Server struct {
 	Static          http.FileSystem
 	SMTPProvisioned bool
 	Files           FileBrowser
-	loginMu         sync.Mutex
-	loginAttempts   map[string]*loginAttempts
-	globalFailures  []time.Time
-	globalPending   int
-	lastLoginPrune  time.Time
-	loginSlots      chan struct{}
-	verifyPassword  func(string) bool
-	repoMu          sync.Mutex
-	repoCache       map[string]*repoVariableCache
-	staticMu        sync.RWMutex
-	staticCache     map[string]staticAsset
-	jobsMu          sync.Mutex
-	jobsCache       *jobList
-	logSlots        chan struct{}
+	// Push is nil until webpush.env holds a VAPID key pair.
+	Push           *webpush.Service
+	loginMu        sync.Mutex
+	loginAttempts  map[string]*loginAttempts
+	globalFailures []time.Time
+	globalPending  int
+	lastLoginPrune time.Time
+	loginSlots     chan struct{}
+	verifyPassword func(string) bool
+	repoMu         sync.Mutex
+	repoCache      map[string]*repoVariableCache
+	staticMu       sync.RWMutex
+	staticCache    map[string]staticAsset
+	jobsMu         sync.Mutex
+	jobsCache      *jobList
+	logSlots       chan struct{}
 }
 
 type staticAsset struct {
@@ -96,6 +99,10 @@ func (s *Server) Handler() http.Handler {
 	private.HandleFunc("POST /api/runner-units/{host}/{unit}/drain", s.runnerUnitOp("drain"))
 	private.HandleFunc("POST /api/runner-units/{host}/{unit}/drain/cancel", s.cancelDrain)
 	private.HandleFunc("POST /api/logout", s.logout)
+	private.HandleFunc("GET /api/push", s.pushStatus)
+	private.HandleFunc("POST /api/push/subscriptions", s.pushSubscribe)
+	private.HandleFunc("DELETE /api/push/subscriptions", s.pushUnsubscribe)
+	private.HandleFunc("POST /api/push/test", s.pushTest)
 	public.Handle("/api", s.authorize(private))
 	public.Handle("/api/", s.authorize(private))
 	public.HandleFunc("/", s.static)
