@@ -56,19 +56,25 @@ type Runner struct {
 }
 
 type WorkflowRun struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	DisplayTitle string `json:"display_title"`
-	HTMLURL      string `json:"html_url"`
-	Status       string `json:"status"`
-	Conclusion   string `json:"conclusion"`
+	ID           int64     `json:"id"`
+	Name         string    `json:"name"`
+	DisplayTitle string    `json:"display_title"`
+	HTMLURL      string    `json:"html_url"`
+	Status       string    `json:"status"`
+	Conclusion   string    `json:"conclusion"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type WorkflowJob struct {
-	Name       string `json:"name"`
-	RunnerName string `json:"runner_name"`
-	Status     string `json:"status"`
-	HTMLURL    string `json:"html_url"`
+	ID          int64     `json:"id"`
+	RunID       int64     `json:"run_id"`
+	Name        string    `json:"name"`
+	RunnerName  string    `json:"runner_name"`
+	Status      string    `json:"status"`
+	Conclusion  string    `json:"conclusion"`
+	HTMLURL     string    `json:"html_url"`
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at"`
 }
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)

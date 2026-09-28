@@ -28,6 +28,10 @@ import (
 type GitHub interface {
 	Variable(context.Context, string, string) (string, error)
 	SetVariable(context.Context, string, string, string) error
+	RecentRuns(context.Context, string, int) ([]githubapp.WorkflowRun, error)
+	Jobs(context.Context, string, int64) ([]githubapp.WorkflowJob, error)
+	Job(context.Context, string, int64) (githubapp.WorkflowJob, error)
+	JobLogTail(context.Context, string, int64, int) (githubapp.LogTail, error)
 }
 
 type Server struct {
@@ -49,6 +53,9 @@ type Server struct {
 	repoCache       map[string]*repoVariableCache
 	staticMu        sync.RWMutex
 	staticCache     map[string]staticAsset
+	jobsMu          sync.Mutex
+	jobsCache       *jobList
+	logSlots        chan struct{}
 }
 
 type staticAsset struct {
@@ -62,7 +69,7 @@ type loginAttempts struct {
 }
 
 func New(cfg config.Config, s *store.Store, c *collect.Collector, gh GitHub, a *auth.Authenticator) *Server {
-	return &Server{Config: cfg, Store: s, Collector: c, GitHub: gh, Auth: a, loginAttempts: map[string]*loginAttempts{}, loginSlots: make(chan struct{}, 2), verifyPassword: a.VerifyPassword, repoCache: map[string]*repoVariableCache{}}
+	return &Server{Config: cfg, Store: s, Collector: c, GitHub: gh, Auth: a, loginAttempts: map[string]*loginAttempts{}, loginSlots: make(chan struct{}, 2), logSlots: make(chan struct{}, concurrentLogs), verifyPassword: a.VerifyPassword, repoCache: map[string]*repoVariableCache{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -79,6 +86,8 @@ func (s *Server) Handler() http.Handler {
 	private.HandleFunc("POST /api/repos/{owner}/{repo}/switch", s.switchRunner)
 	private.HandleFunc("POST /api/switches/bulk", s.bulkSwitch)
 	private.HandleFunc("POST /api/presets/{name}", s.preset)
+	private.HandleFunc("GET /api/jobs", s.jobs)
+	private.HandleFunc("GET /api/repos/{owner}/{repo}/jobs/{job}/log", s.jobLog)
 	private.HandleFunc("POST /api/logout", s.logout)
 	public.Handle("/api", s.authorize(private))
 	public.Handle("/api/", s.authorize(private))

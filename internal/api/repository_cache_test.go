@@ -15,12 +15,13 @@ import (
 )
 
 type slowVariableAPI struct {
+	noJobLogs
 	started sync.Once
 	ready   chan struct{}
 	release chan struct{}
 }
 
-type failedVariableAPI struct{}
+type failedVariableAPI struct{ noJobLogs }
 
 func (failedVariableAPI) Variable(context.Context, string, string) (string, error) {
 	return "", errors.New("GitHub App is not installed for heliowap")
@@ -134,7 +135,7 @@ func TestDashboardDoesNotWaitForGitHubVariables(t *testing.T) {
 	t.Fatal("variable cache did not refresh")
 }
 
-type partialVariableAPI struct{}
+type partialVariableAPI struct{ noJobLogs }
 
 func (partialVariableAPI) Variable(_ context.Context, _, name string) (string, error) {
 	if name == "CI_RUNNER" {
