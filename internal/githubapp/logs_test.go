@@ -184,6 +184,40 @@ func TestJobLogTailBoundsSlowDownload(t *testing.T) {
 	}
 }
 
+func TestJobLogTailErrorsDoNotQuoteSignedURL(t *testing.T) {
+	locations := map[string]string{
+		"control character": "https://blob.example/signed/job.txt?sig=secret\x7f",
+		"bad port":          "https://blob.example:secret/signed/job.txt?sig=secret",
+		"bad escape":        "https://blob.example/signed/%zz?sig=secret",
+		"plain http":        "ftp://blob.example/signed/job.txt?sig=secret",
+		"unreachable":       "http://127.0.0.1:1/signed/job.txt?sig=secret",
+	}
+	for name, location := range locations {
+		t.Run(name, func(t *testing.T) {
+			c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/app/installations/7/access_tokens":
+					writeToken(w)
+				case "/repos/heliowap/vpsdash/actions/jobs/79/logs":
+					w.Header()["Location"] = []string{location}
+					w.WriteHeader(http.StatusFound)
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			_, err := c.JobLogTail(context.Background(), "heliowap/vpsdash", 79, 120)
+			if err == nil {
+				t.Fatal("malformed redirect accepted")
+			}
+			for _, secret := range []string{"secret", "signed", "blob.example", "%zz"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("error quotes the signed URL (%q): %v", secret, err)
+				}
+			}
+		})
+	}
+}
+
 func TestJobLogTailRejectsDeclaredOversizedLog(t *testing.T) {
 	var written int
 	blob := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -108,7 +109,9 @@ func (c *Client) JobLogTail(ctx context.Context, repo string, jobID int64, maxBy
 	client := c.withoutRedirects()
 	resp, err := client.Do(req)
 	if err != nil {
-		return LogTail{}, err
+		// A malformed redirect fails here, before CheckRedirect, with the
+		// Location header quoted in the error.
+		return LogTail{}, fmt.Errorf("GitHub API GET job %d logs failed: %w", jobID, redactURLError(err))
 	}
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -129,8 +132,10 @@ func (c *Client) JobLogTail(ctx context.Context, repo string, jobID int64, maxBy
 	location, err := resp.Location()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	resp.Body.Close()
+	// The Location carries the signed URL: its parse errors are replaced by
+	// fixed messages, since url.Parse errors quote the input.
 	if err != nil {
-		return LogTail{}, fmt.Errorf("GitHub log redirect: %w", err)
+		return LogTail{}, errors.New("GitHub log redirect: invalid Location")
 	}
 	if err := c.checkLogLocation(location); err != nil {
 		return LogTail{}, err
@@ -139,7 +144,7 @@ func (c *Client) JobLogTail(ctx context.Context, repo string, jobID int64, maxBy
 	defer cancel()
 	blob, err := http.NewRequestWithContext(ctx, "GET", location.String(), nil)
 	if err != nil {
-		return LogTail{}, err
+		return LogTail{}, errors.New("GitHub log download: invalid signed URL")
 	}
 	blob.Header.Set("Range", "bytes=-"+strconv.Itoa(maxBytes))
 	blobResp, err := client.Do(blob)
@@ -149,6 +154,7 @@ func (c *Client) JobLogTail(ctx context.Context, repo string, jobID int64, maxBy
 	defer blobResp.Body.Close()
 	switch blobResp.StatusCode {
 	case http.StatusOK, http.StatusPartialContent:
+		// Body read errors come from the connection, not the URL.
 		return readLogTail(blobResp, maxBytes)
 	case http.StatusRequestedRangeNotSatisfiable:
 		return LogTail{}, nil // empty log
@@ -173,14 +179,29 @@ func (c *Client) checkLogLocation(location *url.URL) error {
 	return errors.New("GitHub log redirect must use HTTPS")
 }
 
-// redactURLError drops the signed URL from transport errors so it never
-// reaches logs or responses.
+var errLogTransport = errors.New("invalid or interrupted response")
+
+// redactURLError reduces transport errors on the log path to causes that
+// cannot quote the signed URL: context end, network and DNS errors (which name
+// only the host). Anything else, such as a malformed or unparsable Location
+// header, becomes a fixed message so the URL never reaches logs or responses.
 func redactURLError(err error) error {
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
-		return urlErr.Err
+	if err == nil {
+		return nil
 	}
-	return err
+	var opErr *net.OpError
+	var dnsErr *net.DNSError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	case errors.As(err, &opErr):
+		return opErr
+	case errors.As(err, &dnsErr):
+		return dnsErr
+	}
+	return errLogTransport
 }
 
 var contentRange = regexp.MustCompile(`^bytes (\d+)-(\d+)/(\d+)$`)
