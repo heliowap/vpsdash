@@ -6,7 +6,7 @@ import {
   Terminal, Wifi
 } from 'lucide-react'
 import { api, ApiError } from './api'
-import type { Dashboard, Metric, Project, Repository, Runner, Session } from './types'
+import type { Dashboard, IncidentHistory, Metric, Project, ProjectIncident, Repository, Runner, Session } from './types'
 
 type Tab = 'overview' | 'projects' | 'fleet' | 'sessions'
 type Notice = { kind: 'error' | 'success'; message: string } | null
@@ -210,6 +210,90 @@ function ProjectEditor({ project, csrf, onSaved }: { project: Project; csrf: str
   </form>
 }
 
+const historyFreshSeconds = 120
+
+function dayTime(timestamp: number) {
+  return new Date(timestamp * 1000).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '')
+}
+
+function sameDay(a: number, b: number) {
+  return new Date(a * 1000).toDateString() === new Date(b * 1000).toDateString()
+}
+
+function span(seconds: number) {
+  const minutes = Math.floor(Math.max(0, seconds) / 60)
+  if (minutes < 1) return '< 1 min'
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`
+  return hours % 24 ? `${Math.floor(hours / 24)} d ${hours % 24} h` : `${Math.floor(hours / 24)} d`
+}
+
+function checksLabel(count: number) { return `${count} ${count === 1 ? 'check falho' : 'checks falhos seguidos'}` }
+
+function IncidentRow({ incident, threshold, current, monitored, now }: { incident: ProjectIncident; threshold: number; current: boolean; monitored: boolean; now: number }) {
+  const start = incident.start_known ? dayTime(incident.started_at) : `antes de ${dayTime(incident.started_at)}`
+  const alert = incident.alert_at ? `alerta registrado ${sameDay(incident.started_at, incident.alert_at) ? `às ${observationTime(incident.alert_at)}` : `em ${dayTime(incident.alert_at)}`}` : incident.failed_checks >= threshold ? 'limite de alerta atingido' : ''
+  let stamp: { label: string; tone: string }
+  let title: string
+  let facts: string[]
+  let length = ''
+  if (incident.state === 'recovered' && incident.recovered_at) {
+    stamp = { label: 'Recuperado', tone: '' }
+    title = `${start} → ${sameDay(incident.started_at, incident.recovered_at) ? observationTime(incident.recovered_at) : dayTime(incident.recovered_at)}`
+    facts = [checksLabel(incident.failed_checks), alert]
+    length = span(incident.recovered_at - incident.started_at)
+  } else if (incident.state === 'open' && current) {
+    stamp = { label: 'Em falha', tone: 'stamp-bad' }
+    title = `Falhando desde ${start}`
+    facts = [checksLabel(incident.failed_checks), alert]
+    length = span(now - incident.started_at)
+  } else if (incident.state === 'open') {
+    stamp = { label: 'Não confirmado', tone: 'stamp-unknown' }
+    title = `Última falha em ${dayTime(incident.last_failure_at || incident.started_at)}`
+    facts = [checksLabel(incident.failed_checks), monitored ? 'sem check recente; o estado atual não está confirmado' : 'monitoramento desligado; o estado atual não está confirmado']
+  } else {
+    stamp = { label: 'Só alerta', tone: 'stamp-unknown' }
+    title = `Alerta em ${dayTime(incident.started_at)}`
+    facts = ['checks deste período já saíram da retenção de 30 dias; recuperação não registrada']
+  }
+  return <li className="history-row">
+    <span className={`state-stamp ${stamp.tone}`}>{stamp.label}</span>
+    <div className="history-copy"><strong>{title}</strong><small>{facts.filter(Boolean).join(' · ')}</small>{incident.detail && <span className="history-detail">{incident.detail}</span>}</div>
+    {length && <time className="history-length">{length}</time>}
+  </li>
+}
+
+function ProjectHistory({ project }: { project: Project }) {
+  const [history, setHistory] = useState<IncidentHistory | null>(null)
+  const [error, setError] = useState('')
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick(value => value + 1), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  useEffect(() => {
+    let cancelled = false
+    api.projectIncidents(project.id)
+      .then(result => { if (!cancelled) { setHistory(result); setError('') } })
+      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Não foi possível ler o histórico.') })
+    return () => { cancelled = true }
+  }, [project.id, project.checked_at])
+  const now = Date.now() / 1000
+  const current = !error && !!history?.monitored && !!history.last_check_at && now - history.last_check_at <= historyFreshSeconds
+  const headingID = `history-${project.id}`
+  return <section className="incident-history" aria-labelledby={headingID}>
+    <div className="history-heading"><h3 id={headingID}>Histórico de incidentes</h3>{history && <time>Lido às {observationTime(history.observed_at)}</time>}</div>
+    <p className="history-window">Checks dos últimos 30 dias e alertas dos últimos 90 dias.</p>
+    {error && <p className="form-error" role="alert"><AlertCircle size={15} />{history ? `Histórico não atualizado. Mostrando a leitura das ${observationTime(history.observed_at)}; o estado atual não está confirmado.` : error}</p>}
+    {!history && !error && <p className="history-empty">Lendo o histórico…</p>}
+    {history && (history.incidents.length
+      ? <ol className="history-list">{history.incidents.map(incident => <IncidentRow key={`${incident.source}-${incident.started_at}`} incident={incident} threshold={history.alert_threshold} current={current} monitored={history.monitored} now={now} />)}</ol>
+      : <p className="history-empty">{history.check_count && history.first_check_at ? `Nenhuma falha em ${history.check_count} ${history.check_count === 1 ? 'check' : 'checks'} desde ${dayTime(history.first_check_at)}.` : 'Nenhum check registrado nos últimos 30 dias.'}</p>)}
+    {history?.truncated && <p className="history-empty">Mostrando os 100 incidentes mais recentes.</p>}
+  </section>
+}
+
 function Projects({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; onRefresh: () => void }) {
   const [expanded, setExpanded] = useState<number | null>(null)
   const [query, setQuery] = useState('')
@@ -229,8 +313,9 @@ function Projects({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; on
       <span className={`state-stamp ${project.check_ok === false ? 'stamp-bad' : ''}`}>{project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
     </>
     return <article className="project-row" key={project.id}>
-      {project.native ? <div className="row-main native-main">{contents}</div> : <button className="row-main" type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : project.id)}>{contents}{open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}</button>}
+      <button className="row-main" type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : project.id)}>{contents}{open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}</button>
       {open && !project.native && <ProjectEditor key={`${project.id}-${project.monitored}`} project={project} csrf={csrf} onSaved={() => { setExpanded(null); onRefresh() }} />}
+      {open && (project.monitored || !!project.checked_at) && <ProjectHistory project={project} />}
     </article>
   }
   return <div className="page-body"><div className="page-title"><h1>Projetos</h1><p>Candidatos só geram alertas após promoção. As units nativas dos runners são monitoradas automaticamente.</p></div>

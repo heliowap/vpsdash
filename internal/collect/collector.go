@@ -396,7 +396,7 @@ func (c *Collector) recordProjectCheck(ctx context.Context, p store.Project, ok 
 			return countErr
 		}
 		if count >= 3 {
-			return c.Store.QueueAlert(ctx, "project_down", p.HostID+" / "+p.Name, detail)
+			return c.Store.QueueProjectAlert(ctx, p.ID, "project_down", p.HostID+" / "+p.Name, detail, now)
 		}
 	}
 	return nil
