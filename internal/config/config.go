@@ -42,6 +42,7 @@ type Snippet struct {
 }
 
 const DefaultSnippetTimeout = 30
+const MaxSnippetTimeout = 300
 
 // InteractiveUser is the only account an interactive key may log in as. The
 // PTY runs with that account's rights, so root, the fleet account
@@ -71,7 +72,6 @@ func (c Config) ValidateInteractiveUser(user string) error {
 	}
 	return nil
 }
-const MaxSnippetTimeout = 300
 
 // Address returns the SSH endpoint for the host.
 func (h Host) Address() string {
