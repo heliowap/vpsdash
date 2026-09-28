@@ -301,6 +301,24 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
 .session-row > .row-actions { display: flex; flex: none; }
 .session-row > .row-wide { flex: 0 0 100%; }
 .session-row > .inline-confirm { display: flex; }
+.session-row.is-focused { background: linear-gradient(90deg, #e3ece8, transparent 70%); box-shadow: inset 3px 0 0 var(--action); padding-left: 10px; }
+.reply-panel { display: grid; gap: 10px; margin: 4px 0 2px 32px; padding: 13px 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--raised); min-width: 0; }
+.session-row > .reply-panel { flex: 0 0 calc(100% - 32px); }
+.reply-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.reply-head strong { font-size: 14px; font-weight: 600; }
+.reply-panel > p { margin: 0; font-size: 12px; }
+.reply-panel code { font: 500 12px 'IBM Plex Mono', monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
+.quick-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.key-button { min-width: 44px; justify-content: center; font: 500 13px 'IBM Plex Mono', monospace; }
+.reply-text { display: grid; gap: 7px; font-size: 13px; }
+.reply-text > label:first-child { font-weight: 600; }
+.reply-text-row { display: flex; gap: 8px; min-width: 0; }
+.reply-text-row input { flex: 1; font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
+.reply-text-row .button { flex: none; }
+.reply-text small { font-size: 12px; }
+.reply-warning { display: flex; align-items: start; gap: 7px; margin: 0; color: var(--attention); }
+.reply-warning svg { flex: none; margin-top: 1px; }
+.reply-result { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin: 0; font-size: 13px; }
 .local-command { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px 32px; min-width: 0; }
 .local-command code, .snippet-head code, .terminal-sheet footer code, .operation-preview code { font: 500 12px 'IBM Plex Mono', monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
 .local-command code { flex: 1; min-width: 0; background: #ecefe9; padding: 8px 10px; border-radius: 6px; }
@@ -422,7 +440,10 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
   .channel-row { align-items: start; }
   .channel-row strong { font-size: 14px; }
   .session-row.has-actions .row-actions, .access-head .row-actions { flex-basis: 100%; margin-left: 0; padding-left: 32px; }
-  .local-command, .snippet-list { margin-left: 0; }
+  .local-command, .snippet-list, .reply-panel { margin-left: 0; }
+  .session-row > .reply-panel { flex-basis: 100%; }
+  .reply-text-row { flex-direction: column; }
+  .reply-text-row .button { align-self: flex-start; }
   .local-command { flex-wrap: wrap; }
   .snippet-head { align-items: start; }
   .audit-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
-import { AlertCircle, Check, Copy, KeyRound, LockKeyhole, Play, SquareTerminal, Terminal as TerminalIcon, X } from 'lucide-react'
+import { AlertCircle, Check, Copy, CornerDownLeft, KeyRound, LockKeyhole, Play, SquareTerminal, Terminal as TerminalIcon, X } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import { api, ApiError } from './api'
-import type { AuditEntry, Dashboard, InteractiveHost, InteractiveInfo, Session, Snippet, SnippetResult, TerminalRequest } from './types'
+import type { AuditEntry, Dashboard, InteractiveHost, InteractiveInfo, Reply, ReplyKey, Session, SessionFocus, Snippet, SnippetResult, TerminalRequest } from './types'
 import { agentStateLabel, emptySessionsText } from './sessionState'
 
 function clock(timestamp: number) {
@@ -19,7 +19,8 @@ const auditActions: Record<AuditEntry['action'], string> = {
   terminal: 'Terminal',
   attach_ro: 'Attach somente leitura',
   attach_rw: 'Attach com controle',
-  snippet: 'Comando'
+  snippet: 'Comando',
+  send_keys: 'Resposta ao agente'
 }
 const auditOutcomes: Record<AuditEntry['outcome'], string> = { ok: 'Concluído', denied: 'Negado', failed: 'Falhou', closed: 'Encerrado' }
 
@@ -32,7 +33,7 @@ export function AuditLedger({ refreshKey }: { refreshKey: number }) {
     return () => { current = false }
   }, [refreshKey])
   return <section className="ledger-section" aria-labelledby="audit-heading">
-    <div className="section-heading"><div><h2 id="audit-heading">Registro de acesso</h2><p>Aberturas de terminal, attach, comandos e confirmações de senha. Teclas e saídas não são gravadas.</p></div>{entries && <span className="section-count">{entries.length} recentes</span>}</div>
+    <div className="section-heading"><div><h2 id="audit-heading">Registro de acesso</h2><p>Aberturas de terminal, attach, respostas a agentes, comandos e confirmações de senha. Teclas, textos e saídas não são gravados.</p></div>{entries && <span className="section-count">{entries.length} recentes</span>}</div>
     {error ? <div className="empty-line">{error}</div> : !entries ? <div className="empty-line">Lendo o registro…</div> : entries.length === 0 ? <div className="empty-line">Nenhum acesso interativo registrado.</div> :
       <div className="ruled-list">{entries.map(entry => <div className="audit-row" key={entry.id}>
         <time>{auditTime(entry.ts)}</time>
@@ -148,6 +149,78 @@ function LocalCommand({ command }: { command: string }) {
 type Pending =
   | { kind: 'terminal'; request: TerminalRequest; title: string; mode: OpenTerminal['mode']; localCommand: string }
   | { kind: 'snippet'; host: string; snippet: Snippet }
+  | { kind: 'reply'; host: string; session: string; reply: Reply }
+
+type ReplyResult = { status: 'sent' | 'refused' | 'failed'; message: string }
+
+const stepUpReasons: Record<Pending['kind'], string> = {
+  terminal: 'O terminal exige a senha de novo.',
+  snippet: 'Comandos exigem a senha de novo.',
+  reply: 'Responder a um agente exige a senha de novo.'
+}
+
+// Quick replies mirror the server allowlist. C-c is not offered: it
+// interrupts the agent instead of answering it.
+const quickKeys: { key: ReplyKey; label: string; name: string }[] = [
+  { key: 'y', label: 'y', name: 'y' }, { key: 'n', label: 'n', name: 'n' },
+  { key: '1', label: '1', name: '1' }, { key: '2', label: '2', name: '2' }, { key: '3', label: '3', name: '3' },
+  { key: 'Enter', label: 'Enter', name: 'tecla Enter' }, { key: 'Escape', label: 'Esc', name: 'tecla Esc' },
+  { key: 'Up', label: '↑', name: 'seta para cima' }, { key: 'Down', label: '↓', name: 'seta para baixo' }, { key: 'Tab', label: 'Tab', name: 'tecla Tab' }
+]
+const maxReplyText = 200
+const forbiddenText = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/
+
+function replyTextError(text: string) {
+  if (!text) return ''
+  if (forbiddenText.test(text)) return 'Use uma linha, sem tabulação ou caracteres de controle.'
+  if ([...text].length > maxReplyText) return `Até ${maxReplyText} caracteres.`
+  return ''
+}
+
+function ReplyKeys({ reply }: { reply: Reply }) {
+  if ('key' in reply) {
+    const quick = quickKeys.find(item => item.key === reply.key)
+    return <><code>{reply.key.length === 1 ? reply.key : quick?.label}</code>{reply.key.length > 1 ? ` (${quick?.name})` : ''}</>
+  }
+  return <><code>{reply.text}</code>{reply.enter ? ' e depois Enter' : ' sem Enter'}</>
+}
+
+function ReplyPanel({ session, uncertain, busy, result, onSend, onClose }: { session: Session; uncertain: boolean; busy: boolean; result?: ReplyResult; onSend: (reply: Reply) => void; onClose: () => void }) {
+  const [text, setText] = useState('')
+  const [enter, setEnter] = useState(false)
+  const [draft, setDraft] = useState<Reply | null>(null)
+  const textError = replyTextError(text)
+  const waiting = session.state === 'waiting' && !uncertain
+  const fieldID = `reply-${session.host_id}-${session.name}`.replace(/[^A-Za-z0-9_-]/g, '_')
+  return <div className="reply-panel row-wide">
+    <div className="reply-head"><strong>Responder ao prompt</strong><button className="icon-button" type="button" aria-label="Fechar resposta" title="Fechar resposta" onClick={onClose}><X size={17} /></button></div>
+    <p className="muted-text">As teclas vão para o pane observado desta sessão por <code>tmux send-keys</code>. Você confirma antes do envio.</p>
+    <div className="quick-keys" role="group" aria-label="Respostas rápidas">
+      {quickKeys.map(item => <button key={item.key} className="button button-small key-button" type="button" disabled={busy} aria-label={`Enviar ${item.name}`} onClick={() => setDraft({ key: item.key })}>{item.label}</button>)}
+    </div>
+    <form className="reply-text" onSubmit={event => { event.preventDefault(); if (text && !textError) setDraft({ text, enter }) }}>
+      <label htmlFor={fieldID}>Texto, uma linha</label>
+      <div className="reply-text-row">
+        <input id={fieldID} type="text" value={text} maxLength={maxReplyText * 2} autoComplete="off" spellCheck={false} onChange={event => setText(event.target.value)} aria-invalid={Boolean(textError)} aria-describedby={`${fieldID}-help`} />
+        <button className="button button-small" type="submit" disabled={busy || !text || Boolean(textError)}>Revisar envio</button>
+      </div>
+      <label className="checkbox-row"><input type="checkbox" checked={enter} onChange={event => setEnter(event.target.checked)} />Enviar Enter depois do texto</label>
+      <small id={`${fieldID}-help`} className={textError ? 'form-error' : 'muted-text'}>{textError || `${[...text].length}/${maxReplyText} caracteres`}</small>
+    </form>
+    {draft && <div className="operation-preview reply-confirm" role="group" aria-labelledby={`${fieldID}-confirm`}>
+      <strong id={`${fieldID}-confirm`}>Enviar estas teclas para {session.name}?</strong>
+      <ul>
+        <li>Sessão: <code>{session.name}</code></li>
+        <li>Host: <code>{session.host_id}</code></li>
+        <li>Teclas: <ReplyKeys reply={draft} /></li>
+      </ul>
+      {!waiting && <p className="reply-warning"><AlertCircle size={16} />{uncertain ? 'A última leitura desta sessão não está confirmada.' : `A coleta não marca esta sessão como esperando input (${agentStateLabel(session)}).`} Confira a tela antes de enviar.</p>}
+      <div className="preview-actions"><button className="button button-primary button-small" type="button" disabled={busy} onClick={() => { const reply = draft; setDraft(null); if ('text' in reply) setText(''); onSend(reply) }}><CornerDownLeft size={15} />Enviar teclas</button><button className="button button-plain button-small" type="button" onClick={() => setDraft(null)}>Cancelar</button></div>
+    </div>}
+    {busy && <p className="inline-feedback" role="status">Enviando…</p>}
+    {!busy && result && <p className="reply-result" role={result.status === 'sent' ? 'status' : 'alert'}><span className={`state-stamp ${result.status === 'sent' ? '' : 'stamp-bad'}`}>{result.status === 'sent' ? 'Enviado' : result.status === 'refused' ? 'Recusado' : 'Falhou'}</span><span>{result.message}</span></p>}
+  </div>
+}
 
 function SnippetRow({ host, snippet, busy, result, onRun }: { host: string; snippet: Snippet; busy: boolean; result?: SnippetResult | string; onRun: () => void }) {
   const [confirm, setConfirm] = useState(false)
@@ -183,21 +256,24 @@ function HostAccess({ host, busy, results, onTerminal, onSnippet }: { host: Inte
   </article>
 }
 
-function SessionActions({ session, host, onOpen }: { session: Session; host?: InteractiveHost; onOpen: (write: boolean) => void }) {
+function SessionActions({ session, host, focused, uncertain, replyBusy, replyResult, onOpen, onReply }: { session: Session; host?: InteractiveHost; focused: boolean; uncertain: boolean; replyBusy: boolean; replyResult?: ReplyResult; onOpen: (write: boolean) => void; onReply: (reply: Reply) => void }) {
   const [confirmWrite, setConfirmWrite] = useState(false)
   const [showLocal, setShowLocal] = useState(false)
+  const [replying, setReplying] = useState(focused)
+  useEffect(() => { if (focused) setReplying(true) }, [focused])
   const localCommand = host?.attach_commands[session.name]
   return <>
     <div className="row-actions">
-      {host?.terminal ? <><button className="button button-small button-primary" type="button" onClick={() => onOpen(false)}>Ver sessão</button><button className="button button-small" type="button" onClick={() => setConfirmWrite(true)}>Assumir controle</button></> : <span className="muted-text">Sem chave interativa</span>}
+      {host?.terminal ? <><button className="button button-small button-primary" type="button" onClick={() => onOpen(false)}>Ver sessão</button><button className="button button-small" type="button" aria-expanded={replying} onClick={() => setReplying(!replying)}>Responder</button><button className="button button-small" type="button" onClick={() => setConfirmWrite(true)}>Assumir controle</button></> : <span className="muted-text">Sem chave interativa</span>}
       {localCommand && <button className="button button-small button-plain" type="button" aria-expanded={showLocal} onClick={() => setShowLocal(!showLocal)}>Terminal local</button>}
     </div>
     {confirmWrite && <div className="inline-confirm row-wide"><span>Assumir o controle de <b>{session.name}</b> em {session.host_id}? O que você digitar chega ao agente desta sessão.</span><div><button className="button button-small button-primary" type="button" onClick={() => { setConfirmWrite(false); onOpen(true) }}>Assumir controle</button><button className="button button-small button-plain" type="button" onClick={() => setConfirmWrite(false)}>Cancelar</button></div></div>}
     {showLocal && localCommand && <div className="row-wide"><LocalCommand command={localCommand} /></div>}
+    {replying && host?.terminal && <ReplyPanel session={session} uncertain={uncertain} busy={replyBusy} result={replyResult} onSend={onReply} onClose={() => setReplying(false)} />}
   </>
 }
 
-export function InteractiveSessions({ data, csrf, uncertain, collectionUncertain, age }: { data: Dashboard; csrf: string; uncertain: (session: Session) => boolean; collectionUncertain: boolean; age: (ts?: number) => string }) {
+export function InteractiveSessions({ data, csrf, uncertain, collectionUncertain, age, focus }: { data: Dashboard; csrf: string; uncertain: (session: Session) => boolean; collectionUncertain: boolean; age: (ts?: number) => string; focus: SessionFocus | null }) {
   const [info, setInfo] = useState<InteractiveInfo | null>(null)
   const [infoError, setInfoError] = useState('')
   const [stepUpUntil, setStepUpUntil] = useState(0)
@@ -206,6 +282,7 @@ export function InteractiveSessions({ data, csrf, uncertain, collectionUncertain
   const [terminal, setTerminal] = useState<OpenTerminal | null>(null)
   const [busy, setBusy] = useState('')
   const [results, setResults] = useState<Record<string, SnippetResult | string>>({})
+  const [replies, setReplies] = useState<Record<string, ReplyResult>>({})
   const [notice, setNotice] = useState('')
   const [auditKey, setAuditKey] = useState(0)
   const loadInfo = useCallback(() => {
@@ -222,6 +299,13 @@ export function InteractiveSessions({ data, csrf, uncertain, collectionUncertain
       if (action.kind === 'terminal') {
         const result = await api.terminalTicket(action.request, csrf)
         setTerminal({ ticket: result.ticket, title: action.title, mode: action.mode, localCommand: result.local_command })
+      } else if (action.kind === 'reply') {
+        const key = `reply:${action.host}/${action.session}`
+        setBusy(key)
+        try {
+          await api.sendKeys(action.host, action.session, action.reply, csrf)
+          setReplies(current => ({ ...current, [key]: { status: 'sent', message: `Teclas entregues às ${clock(Date.now() / 1000)}. Veja a sessão para conferir a resposta do agente.` } }))
+        } finally { setBusy('') }
       } else {
         const key = `${action.host}/${action.snippet.name}`
         setBusy(key)
@@ -230,16 +314,21 @@ export function InteractiveSessions({ data, csrf, uncertain, collectionUncertain
       }
       setAuditKey(value => value + 1)
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'step_up_required') { setStepUpUntil(0); setPending(action); setStepUpReason(action.kind === 'snippet' ? 'Comandos exigem a senha de novo.' : 'O terminal exige a senha de novo.'); return }
+      if (err instanceof ApiError && err.code === 'step_up_required') { setStepUpUntil(0); setPending(action); setStepUpReason(stepUpReasons[action.kind]); return }
       const message = err instanceof Error ? err.message : 'Ação não concluída.'
-      if (action.kind === 'snippet') setResults(current => ({ ...current, [`${action.host}/${action.snippet.name}`]: message }))
+      if (action.kind === 'reply') {
+        // A refusal is the panel saying no (validation, session, limits);
+        // a failure is the host or the network not confirming the send.
+        const refused = err instanceof ApiError && err.status >= 400 && err.status < 500
+        setReplies(current => ({ ...current, [`reply:${action.host}/${action.session}`]: { status: refused ? 'refused' : 'failed', message: err instanceof ApiError ? message : 'Sem resposta do painel. O envio não foi confirmado.' } }))
+      } else if (action.kind === 'snippet') setResults(current => ({ ...current, [`${action.host}/${action.snippet.name}`]: message }))
       else setNotice(message)
       setAuditKey(value => value + 1)
     }
   }, [csrf])
 
   function request(action: Pending) {
-    if (!steppedUp) { setPending(action); setStepUpReason(action.kind === 'snippet' ? 'Comandos exigem a senha de novo.' : 'O terminal exige a senha de novo.'); return }
+    if (!steppedUp) { setPending(action); setStepUpReason(stepUpReasons[action.kind]); return }
     void execute(action)
   }
 
@@ -255,14 +344,18 @@ export function InteractiveSessions({ data, csrf, uncertain, collectionUncertain
       {info && <p className="muted-text access-foot">Até {info.max_sessions} sessões interativas ao mesmo tempo · o terminal fecha após {info.idle_minutes} min sem digitação.</p>}
     </section>
     <section className="ledger-section" aria-labelledby="sessions-heading">
-      <div className="section-heading"><div><h2 id="sessions-heading">Sessões tmux</h2><p>“Ver sessão” abre o attach somente leitura. Assumir o controle pede confirmação.</p></div><span className="section-count">{data.sessions.length}</span></div>
+      <div className="section-heading"><div><h2 id="sessions-heading">Sessões tmux</h2><p>“Ver sessão” abre o attach somente leitura. “Responder” envia uma tecla ou uma linha ao agente; responder e assumir o controle pedem confirmação.</p></div><span className="section-count">{data.sessions.length}</span></div>
       {data.sessions.length ? <div className="ruled-list">{data.sessions.map(session => {
         const unsure = uncertain(session)
-        return <div className="session-row has-actions" key={`${session.host_id}-${session.name}`}>
+        const focused = Boolean(focus && focus.host === session.host_id && focus.session === session.name)
+        const replyKey = `reply:${session.host_id}/${session.name}`
+        return <div className={`session-row has-actions ${focused ? 'is-focused' : ''}`} data-focused={focused || undefined} key={`${session.host_id}-${session.name}`}>
           <TerminalIcon size={19} />
           <div><strong>{session.name}</strong><small>{session.host_id} · {session.cwd || 'caminho indisponível'} · {session.agent || 'shell'} · {unsure ? 'última leitura ' : ''}{age(session.seen_at)}</small></div>
           <span className={`state-stamp ${unsure ? 'stamp-unknown' : ''}`}>{unsure ? 'Não confirmado' : agentStateLabel(session)}</span>
-          <SessionActions session={session} host={hostsByID[session.host_id]} onOpen={write => request({ kind: 'terminal', request: { host: session.host_id, kind: 'attach', session: session.name, write, confirm_write: write }, title: `tmux ${session.name} · ${session.host_id}`, mode: write ? 'write' : 'read', localCommand: hostsByID[session.host_id]?.attach_commands[session.name] || '' })} />
+          <SessionActions session={session} host={hostsByID[session.host_id]} focused={focused} uncertain={unsure} replyBusy={busy === replyKey} replyResult={replies[replyKey]}
+            onReply={reply => { setReplies(current => { const next = { ...current }; delete next[replyKey]; return next }); request({ kind: 'reply', host: session.host_id, session: session.name, reply }) }}
+            onOpen={write => request({ kind: 'terminal', request: { host: session.host_id, kind: 'attach', session: session.name, write, confirm_write: write }, title: `tmux ${session.name} · ${session.host_id}`, mode: write ? 'write' : 'read', localCommand: hostsByID[session.host_id]?.attach_commands[session.name] || '' })} />
         </div>
       })}</div> : <div className="empty-line">{emptySessionsText(collectionUncertain)}</div>}
     </section>
@@ -275,7 +368,7 @@ export function InteractiveSessions({ data, csrf, uncertain, collectionUncertain
 export function PublicRouteNote() {
   return <div className="route-note" role="note">
     <LockKeyhole size={19} />
-    <div><strong>Terminal, attach e comandos só pela tailnet</strong><p>Você entrou pela rota pública. Aqui o painel apenas lê o estado das sessões. Abra o endereço privado do Tailscale para usar o terminal, o attach tmux e os comandos do host.</p></div>
+    <div><strong>Terminal, attach, respostas e comandos só pela tailnet</strong><p>Você entrou pela rota pública. Aqui o painel apenas lê o estado das sessões. Abra o endereço privado do Tailscale para usar o terminal, o attach tmux, responder a um agente que espera input e os comandos do host.</p></div>
   </div>
 }
 
