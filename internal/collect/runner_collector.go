@@ -31,9 +31,19 @@ func (c *Collector) runnerUnitLoop(ctx context.Context, account config.RunnerUni
 }
 
 func (c *Collector) pollRunnerUnits(ctx context.Context, account config.RunnerUnitHost) error {
+	units, err := c.readRunnerUnits(ctx, account)
+	if err != nil {
+		return err
+	}
+	return c.saveRunnerUnits(ctx, account.HostID, units, time.Now())
+}
+
+// readRunnerUnits reads the unit states through the gh-agents account. The
+// caller holds the host lock.
+func (c *Collector) readRunnerUnits(ctx context.Context, account config.RunnerUnitHost) (map[string]RunnerUnit, error) {
 	h, ok := c.host(account.HostID)
 	if !ok {
-		return fmt.Errorf("unknown runner unit host %s", account.HostID)
+		return nil, fmt.Errorf("unknown runner unit host %s", account.HostID)
 	}
 	h.ID = "runner-units:" + h.ID // SSH clients are cached by ID; this account needs its own client.
 	h.SSHUser = account.SSHUser
@@ -41,13 +51,9 @@ func (c *Collector) pollRunnerUnits(ctx context.Context, account config.RunnerUn
 	h.Local = false
 	raw, err := c.Executor.Run(ctx, h, RunnerUnitsScript)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	units, err := ParseRunnerUnits(raw)
-	if err != nil {
-		return err
-	}
-	return c.saveRunnerUnits(ctx, account.HostID, units, time.Now())
+	return ParseRunnerUnits(raw)
 }
 
 func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units map[string]RunnerUnit, now time.Time) error {
@@ -69,6 +75,19 @@ func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units ma
 		p, err := c.Store.UpsertNativeRunnerUnit(ctx, hostID, unit.Name)
 		if err != nil {
 			return err
+		}
+		if op := latest[unit.Name]; op.StopUnconfirmed {
+			// A drain ended without knowing whether its stop reached
+			// systemd. This reading settles it before the check is kept.
+			stopped := unit.Stopped()
+			if err := c.Store.ResolveDrainStop(ctx, op.ID, stopped, resolvedDrainDetail(op, unit)); err != nil {
+				return err
+			}
+			if stopped {
+				op.Status = "done"
+			}
+			op.StopUnconfirmed = false
+			latest[unit.Name] = op
 		}
 		detail := unit.LoadState + "/" + unit.ActiveState
 		if reason := plannedStopReason(latest[unit.Name], unit, now); reason != "" && !unit.Healthy() {
@@ -117,4 +136,12 @@ func plannedStopReason(op store.UnitOp, unit RunnerUnit, now time.Time) string {
 		return "reiniciada pelo painel"
 	}
 	return ""
+}
+
+func resolvedDrainDetail(op store.UnitOp, unit RunnerUnit) string {
+	state := unit.LoadState + "/" + unit.ActiveState
+	if unit.Stopped() {
+		return "O pedido de parada foi enviado antes do fim da drenagem, e a leitura seguinte do systemd mostrou a unit " + state + ". Ela não recebe novos jobs até ser reiniciada."
+	}
+	return "O pedido de parada foi enviado antes do fim da drenagem, mas a leitura seguinte do systemd mostrou a unit " + state + ": ela não foi parada."
 }

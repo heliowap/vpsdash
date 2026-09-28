@@ -81,13 +81,16 @@ function drainedUnit(project: Project, ops: Map<string, UnitOp>) {
 
 // The collector marks a failed reading as planned while a drain holds the
 // unit stopped or a panel restart is still settling. It never alerts, so it
-// is not an incident either.
-type PlannedStop = 'drain' | 'restart'
+// is not an incident either. A drain whose stop request may have reached the
+// host stays neutral until the next unit reading settles it.
+type PlannedStop = 'drain' | 'restart' | 'unconfirmed'
 function plannedStop(project: Project, ops: Map<string, UnitOp>): PlannedStop | null {
   if (!project.native || project.check_ok !== false) return null
   if (drainedUnit(project, ops)) return 'drain'
+  if (ops.get(unitKey(project.host_id, project.name))?.stop_unconfirmed) return 'unconfirmed'
   return project.check_planned ? 'restart' : null
 }
+const plannedStamp: Record<PlannedStop, string> = { drain: 'Drenada', restart: 'Reiniciando', unconfirmed: 'Não confirmado' }
 
 // Runners whose unit is in a planned stop.
 function plannedRunnerStops(data: Dashboard) {
@@ -349,7 +352,7 @@ function Projects({ data, csrf, onRefresh }: { data: Dashboard; csrf: string; on
     const contents = <>
       <span className={`status-dot ${planned || !project.monitored || project.check_ok === undefined ? 'is-unknown' : project.check_ok ? 'is-good' : 'is-bad'}`} />
       <span className="row-copy"><strong>{project.name}</strong><small>{project.host_id} · {project.native ? 'unit nativa' : project.source} · {project.monitored ? age(project.checked_at) : 'candidato'}</small></span>
-      <span className={`state-stamp ${planned ? 'stamp-unknown' : project.check_ok === false ? 'stamp-bad' : ''}`}>{planned === 'drain' ? 'Drenada' : planned ? 'Reiniciando' : project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
+      <span className={`state-stamp ${planned ? 'stamp-unknown' : project.check_ok === false ? 'stamp-bad' : ''}`}>{planned ? plannedStamp[planned] : project.monitored ? project.check_ok === undefined ? 'Aguardando' : project.check_ok ? 'Ativo' : 'Falhou' : 'Silencioso'}</span>
     </>
     return <article className="project-row" key={project.id}>
       <button className="row-main" type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : project.id)}>{contents}{open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}</button>
@@ -741,9 +744,10 @@ function RunnerUnitRow({ unit, op, data, csrf, onRefresh, refreshFailed }: { uni
   const running = op?.status === 'running'
   const drained = op?.action === 'drain' && op.status === 'done' && unit.check_ok === false
   const settling = !running && !drained && unit.check_ok === false && Boolean(unit.check_planned)
+  const stopUnknown = !running && Boolean(op?.stop_unconfirmed)
   const active = unit.check_ok === true
-  const stamp = running ? op.action === 'restart' ? 'Reiniciando' : 'Drenando' : unitUncertain ? 'Não confirmado' : drained ? 'Drenada' : settling ? 'Reiniciando' : unit.check_ok === undefined ? 'Aguardando' : active ? 'Ativa' : 'Parada'
-  const stampClass = running || unitUncertain || drained || settling || unit.check_ok === undefined ? 'stamp-unknown' : active ? '' : 'stamp-bad'
+  const stamp = running ? op.action === 'restart' ? 'Reiniciando' : 'Drenando' : unitUncertain || stopUnknown ? 'Não confirmado' : drained ? 'Drenada' : settling ? 'Reiniciando' : unit.check_ok === undefined ? 'Aguardando' : active ? 'Ativa' : 'Parada'
+  const stampClass = running || unitUncertain || stopUnknown || drained || settling || unit.check_ok === undefined ? 'stamp-unknown' : active ? '' : 'stamp-bad'
   const busyJob = Boolean(runner?.busy && fleetCurrent)
   async function run(action: 'restart' | 'drain' | 'drain/cancel') {
     setBusy(true); setError('')
@@ -771,14 +775,14 @@ function RunnerUnitRow({ unit, op, data, csrf, onRefresh, refreshFailed }: { uni
       <div><button type="button" className="button button-small button-primary" disabled={busy} onClick={() => void run(confirm)}>{busy ? 'Enviando…' : confirm === 'restart' ? active ? 'Confirmar reinício' : 'Confirmar início' : 'Confirmar drenagem'}</button><button type="button" className="button button-small button-plain" onClick={() => setConfirm(null)}>Cancelar</button></div>
     </div>}
     {error && <p className="inline-feedback is-error" role="alert">{error}</p>}
-    {op && (running || drained || Date.now() / 1000 - (op.finished_at || op.requested_at) < 3600) && <p className={`inline-feedback ${op.status === 'failed' || op.status === 'expired' ? 'is-error' : ''}`} role="status">{opSummary(op)}</p>}
+    {op && (running || drained || stopUnknown || Date.now() / 1000 - (op.finished_at || op.requested_at) < 3600) && <p className={`inline-feedback ${op.status === 'failed' || op.status === 'expired' ? 'is-error' : ''}`} role="status">{opSummary(op)}</p>}
   </article>
 }
 
 function RunnerRow({ runner, uncertain, planned }: { runner: Runner; uncertain: boolean; planned?: PlannedStop }) {
-  const lastState = runner.job || (runner.busy ? 'Ocupado' : runner.status === 'online' ? 'Livre' : planned === 'drain' ? 'Offline · unit drenada pelo painel' : planned ? 'Offline · unit reiniciando pelo painel' : 'Offline')
+  const lastState = runner.job || (runner.busy ? 'Ocupado' : runner.status === 'online' ? 'Livre' : planned === 'drain' ? 'Offline · unit drenada pelo painel' : planned === 'unconfirmed' ? 'Offline · parada da drenagem não confirmada' : planned ? 'Offline · unit reiniciando pelo painel' : 'Offline')
   const plannedStop = Boolean(planned) && runner.status === 'offline'
-  return <div className="runner-row"><span className={`status-dot ${uncertain || plannedStop ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain || plannedStop ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : plannedStop ? planned === 'drain' ? 'Drenado' : 'Reiniciando' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
+  return <div className="runner-row"><span className={`status-dot ${uncertain || plannedStop ? 'is-unknown' : runner.status === 'online' ? 'is-good' : 'is-bad'}`} /><div><strong>{runner.name}</strong><small>{runner.repo} · {uncertain ? `última leitura ${age(runner.seen_at)} · ${lastState}` : lastState}</small></div><span className={`state-stamp ${uncertain || plannedStop ? 'stamp-unknown' : runner.status === 'offline' ? 'stamp-bad' : ''}`}>{uncertain ? 'Não confirmado' : plannedStop ? planned === 'drain' ? 'Drenado' : planned === 'unconfirmed' ? 'Não confirmado' : 'Reiniciando' : runner.status === 'offline' ? 'Offline' : runner.busy ? 'Ocupado' : 'Livre'}</span></div>
 }
 
 const agentStateLabels: Record<string, string> = { working: 'Trabalhando', waiting: 'Esperando input', idle: 'Ociosa' }

@@ -169,6 +169,7 @@ CREATE TABLE minutes_cursor (
 );
 CREATE INDEX idx_runner_unit_ops_unit ON runner_unit_ops(host_id, unit, id);`,
 	`ALTER TABLE checks ADD COLUMN planned INTEGER NOT NULL DEFAULT 0 CHECK(planned IN (0,1));`,
+	`ALTER TABLE runner_unit_ops ADD COLUMN stop_unconfirmed INTEGER NOT NULL DEFAULT 0 CHECK(stop_unconfirmed IN (0,1));`,
 }
 
 func migrate(db *sql.DB) error {

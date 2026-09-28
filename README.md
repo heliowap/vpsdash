@@ -226,6 +226,14 @@ Cada pedido é gravado na tabela `runner_unit_ops` (ação, resultado,
 horários) e no log do serviço. Se o serviço reiniciar durante uma drenagem,
 a operação fica registrada como interrompida.
 
+Se a drenagem é cancelada, expira ou o serviço é encerrado enquanto o pedido
+de parada já está a caminho do host, o painel não presume o resultado: lê o
+estado da unit uma vez. Unit parada fecha a operação como drenagem
+concluída (parada planejada, sem alerta); unit ativa mantém o cancelamento
+com o estado lido. Se a leitura falhar, o registro diz "Estado da unit não
+confirmado", a UI mostra "Não confirmado" fora dos incidentes, e a próxima
+leitura das units decide o resultado da mesma forma.
+
 Para atualizar um painel já instalado, reinstale a ponte **antes** de
 publicar o novo binário; a versão anterior recusa os comandos novos:
 

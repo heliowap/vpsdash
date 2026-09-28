@@ -120,10 +120,15 @@ func (c *Collector) StartRunnerUnitOp(ctx context.Context, hostID, unit, action 
 	log.Printf("runner unit %s requested: %s on %s (op %d)", action, unit, hostID, op.ID)
 	go func() {
 		defer cancel()
-		status, detail := c.runUnitOp(opCtx, h, op, active)
+		result := c.runUnitOp(opCtx, h, op, active)
+		status, detail := result.status, result.detail
 		finishCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
-		if err := c.Store.FinishUnitOp(finishCtx, op.ID, status, detail, time.Now()); err != nil {
+		finish := c.Store.FinishUnitOp
+		if result.unconfirmed {
+			finish = c.Store.FinishUnitOpStopUnconfirmed
+		}
+		if err := finish(finishCtx, op.ID, status, detail, time.Now()); err != nil {
 			log.Printf("runner unit op %d: audit not saved: %v", op.ID, err)
 		}
 		log.Printf("runner unit %s %s: %s on %s (op %d): %s", action, status, unit, hostID, op.ID, detail)
@@ -156,16 +161,25 @@ func (c *Collector) drainCancelled(active *activeUnitOp) bool {
 	return active.cancelled
 }
 
-func (c *Collector) runUnitOp(ctx context.Context, h config.Host, op store.UnitOp, active *activeUnitOp) (string, string) {
+type unitOpResult struct {
+	status, detail string
+	// unconfirmed: a drain stop was sent, but no reading shows its effect.
+	unconfirmed bool
+}
+
+func (c *Collector) runUnitOp(ctx context.Context, h config.Host, op store.UnitOp, active *activeUnitOp) unitOpResult {
 	if op.Action == "restart" {
 		output, err := c.Units.RunnerUnitCommand(ctx, h, "runner-restart", op.Unit)
 		if err != nil {
-			return "failed", commandFailure(output, err)
+			return unitOpResult{status: "failed", detail: commandFailure(output, err)}
 		}
-		return "done", "Unit reiniciada pelo systemd do gh-agents."
+		return unitOpResult{status: "done", detail: "Unit reiniciada pelo systemd do gh-agents."}
 	}
 	runner := RunnerNameForUnit(op.Unit)
 	waiting := ""
+	// stopSent records a runner-drain call interrupted by cancellation,
+	// expiry or shutdown: systemd may or may not have stopped the unit.
+	stopSent := false
 	for {
 		reason := ""
 		busy, err := c.runnerBusyOnGitHub(ctx, runner)
@@ -177,11 +191,13 @@ func (c *Collector) runUnitOp(ctx context.Context, h config.Host, op store.UnitO
 			output, err := c.Units.RunnerUnitCommand(ctx, h, "runner-drain", op.Unit)
 			switch {
 			case err == nil:
-				return "done", "Unit parada sem job em andamento. Ela não recebe novos jobs até ser reiniciada."
+				return unitOpResult{status: "done", detail: "Unit parada sem job em andamento. Ela não recebe novos jobs até ser reiniciada."}
 			case errors.Is(err, ErrRunnerJobRunning):
 				reason = "O host informa um job em andamento neste runner."
 			case ctx.Err() == nil:
-				return "failed", commandFailure(output, err)
+				return unitOpResult{status: "failed", detail: commandFailure(output, err)}
+			default:
+				stopSent = true
 			}
 		}
 		if reason != "" && reason != waiting {
@@ -192,13 +208,78 @@ func (c *Collector) runUnitOp(ctx context.Context, h config.Host, op store.UnitO
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			status := "expired"
 			if c.drainCancelled(active) {
-				return "cancelled", "Drenagem cancelada antes da parada da unit."
+				status = "cancelled"
 			}
-			return "expired", fmt.Sprintf("O job não terminou em %d min. A unit não foi parada.", int(c.ops.timeout.Minutes()))
+			if stopSent {
+				return c.confirmDrainStop(op, status)
+			}
+			if status == "cancelled" {
+				return unitOpResult{status: status, detail: "Drenagem cancelada antes da parada da unit."}
+			}
+			if c.ops.base.Err() != nil {
+				return unitOpResult{status: status, detail: "O painel foi encerrado antes da parada da unit. A unit não foi parada."}
+			}
+			return unitOpResult{status: status, detail: fmt.Sprintf("O job não terminou em %d min. A unit não foi parada.", int(c.ops.timeout.Minutes()))}
 		case <-timer.C:
 		}
 	}
+}
+
+// drainConfirmTimeout bounds the unit reading that settles an interrupted
+// stop request, even while the service shuts down.
+const drainConfirmTimeout = 20 * time.Second
+
+// confirmDrainStop runs when a drain ends while its runner-drain request was
+// in flight. The request may have stopped the unit, so one fresh reading
+// decides the outcome instead of assuming either way.
+func (c *Collector) confirmDrainStop(op store.UnitOp, status string) unitOpResult {
+	why := "O prazo da drenagem terminou"
+	switch {
+	case status == "cancelled":
+		why = "A drenagem foi cancelada"
+	case c.ops.base.Err() != nil:
+		why = "O painel foi encerrado"
+	}
+	why += " com o pedido de parada já enviado ao host"
+	unit, err := c.readRunnerUnitNow(op.HostID, op.Unit)
+	if err != nil {
+		return unitOpResult{status: status, unconfirmed: true, detail: why + ". Estado da unit não confirmado: " + err.Error()}
+	}
+	state := unit.LoadState + "/" + unit.ActiveState
+	if unit.Stopped() {
+		return unitOpResult{status: "done", detail: why + "; o systemd informa a unit " + state + ". Ela não recebe novos jobs até ser reiniciada."}
+	}
+	return unitOpResult{status: status, detail: why + ", mas o systemd informa a unit " + state + ": ela não foi parada."}
+}
+
+func (c *Collector) readRunnerUnitNow(hostID, name string) (RunnerUnit, error) {
+	var account config.RunnerUnitHost
+	found := false
+	for _, a := range c.Config.RunnerUnitHosts {
+		if a.HostID == hostID {
+			account, found = a, true
+			break
+		}
+	}
+	lock, ok := c.hostLocks[hostID]
+	if !found || !ok {
+		return RunnerUnit{}, fmt.Errorf("unknown runner unit host %s", hostID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), drainConfirmTimeout)
+	defer cancel()
+	lock.Lock()
+	units, err := c.readRunnerUnits(ctx, account)
+	lock.Unlock()
+	if err != nil {
+		return RunnerUnit{}, err
+	}
+	unit, present := units[name]
+	if !present {
+		return RunnerUnit{}, errors.New("unit ausente da leitura")
+	}
+	return unit, nil
 }
 
 // runnerBusyOnGitHub checks the latest fleet reading. The bridge still

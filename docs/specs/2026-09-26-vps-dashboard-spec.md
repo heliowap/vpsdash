@@ -229,7 +229,13 @@ Restart e drenagem das units `actions.runner.<runner-name>.service` do
   até 2 min após um reinício registra o check como falho e planejado
   (`checks.planned`, migração 6): não conta para as três falhas seguidas,
   interrompe a sequência e não gera `project_down`; a UI a mostra como
-  drenada ou reiniciando, fora da lista de incidentes. Retenção de 90 dias, preservando a última operação de cada unit.
+  drenada ou reiniciando, fora da lista de incidentes. Drenagem cancelada,
+  expirada ou interrompida com `runner-drain` em andamento lê o estado da
+  unit com contexto novo: parada vira `done` (drenada); ativa mantém o
+  status com o estado lido; sem leitura, fica com
+  `runner_unit_ops.stop_unconfirmed` (migração 7) e a próxima leitura das
+  units resolve. Operações de drenagem abandonadas no início do serviço
+  também ficam não confirmadas. Retenção de 90 dias, preservando a última operação de cada unit.
 - **API**: `POST /api/runner-units/{host}/{unit}/restart`, `.../drain` e
   `.../drain/cancel`, com sessão e CSRF. Só aceita units nativas já
   observadas em um host de `runner_unit_hosts`; uma operação por unit.

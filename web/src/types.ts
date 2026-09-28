@@ -14,4 +14,4 @@ export type MinutesReport = { generated_at: number; collector_enabled: boolean; 
 export type Job = { repo: string; id: number; run_id: number; name: string; workflow?: string; run_title?: string; status: string; conclusion?: string; runner_name?: string; started_at?: number; completed_at?: number; html_url?: string }
 export type JobList = { jobs: Job[]; errors: Record<string, string>; observed_at: number }
 export type JobLog = { job: Job; log: { state: 'ok' | 'pending' | 'unavailable' | 'expired' | 'too_large'; text: string; size: number; truncated: boolean; message?: string }; complete: boolean; poll_after_ms: number; observed_at: number }
-export type UnitOp = { id: number; host_id: string; unit: string; action: 'restart' | 'drain'; status: 'running' | 'done' | 'failed' | 'cancelled' | 'expired'; detail?: string; requested_at: number; finished_at?: number }
+export type UnitOp = { id: number; host_id: string; unit: string; action: 'restart' | 'drain'; status: 'running' | 'done' | 'failed' | 'cancelled' | 'expired'; detail?: string; requested_at: number; finished_at?: number; stop_unconfirmed?: boolean }

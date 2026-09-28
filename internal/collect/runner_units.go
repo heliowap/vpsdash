@@ -18,6 +18,15 @@ func (u RunnerUnit) Healthy() bool {
 	return u.LoadState == "loaded" && u.ActiveState == "active"
 }
 
+// Stopped reports a unit systemd has stopped or is stopping.
+func (u RunnerUnit) Stopped() bool {
+	switch u.ActiveState {
+	case "inactive", "failed", "deactivating":
+		return true
+	}
+	return false
+}
+
 // Transitioning reports a unit systemd is still starting or stopping.
 func (u RunnerUnit) Transitioning() bool {
 	switch u.ActiveState {

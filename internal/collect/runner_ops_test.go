@@ -28,6 +28,7 @@ type fakeUnits struct {
 	results  []error
 	release  chan struct{}
 	snapshot string
+	runErr   error
 }
 
 func (f *fakeUnits) RunnerUnitCommand(ctx context.Context, host config.Host, action, unit string) (string, error) {
@@ -68,7 +69,7 @@ func (f *fakeUnits) Run(_ context.Context, _ config.Host, script string) (string
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.snapshot, nil
+	return f.snapshot, f.runErr
 }
 func (f *fakeUnits) Check(context.Context, config.Host, string, string) (string, error) {
 	return "", errors.New("unexpected check")
