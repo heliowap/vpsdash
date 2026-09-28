@@ -24,19 +24,14 @@ página Frota, cada unit de runner pode ser reiniciada ou drenada após
 confirmação (veja [Operar units de runner](#operar-units-de-runner)).
 
 O canal SMTP mostra "não provisionado" e mantém eventos pendentes enquanto
-<<<<<<< HEAD
 `smtp.env` não existir. Com `webpush.env`, cada dispositivo pode ativar
 notificações push na visão geral (§Web Push). A lista tmux detecta o agente e
 sugere seu estado (trabalhando, esperando input ou ociosa) a partir da tela e
-da CPU do pane entre duas leituras; o terminal web e o
-attach ficam para `v0.2`, conforme a especificação. A interface não afirma
-=======
-`smtp.env` não existir. A lista tmux detecta o agente. Pelo endereço
-privado da tailnet, a página Sessões abre um terminal web (xterm.js sobre
-WebSocket até um PTY SSH), o attach tmux somente leitura com um clique e os
-comandos fixos de cada host; veja [Terminal, attach e
-comandos](#terminal-attach-e-comandos-rota-privada). A interface não afirma
->>>>>>> 4a91175 (docs: describe the private interactive contract)
+da CPU do pane entre duas leituras. Pelo endereço privado da tailnet, a página
+Sessões abre um terminal web (xterm.js sobre WebSocket até um PTY SSH), o
+attach tmux somente leitura com um clique e os comandos fixos de cada host;
+veja [Terminal, attach e comandos](#terminal-attach-e-comandos-rota-privada).
+A interface não afirma
 que um host está saudável antes da primeira leitura.
 
 A aba Arquivos navega e exibe, somente para leitura, as pastas listadas em

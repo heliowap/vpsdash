@@ -6,15 +6,6 @@ fixam comportamento visível e linguagem da interface.
 
 - Nunca grave senhas, PEM, IDs de instalação ou endereços reais da tailnet no
   repositório. A configuração de exemplo usa um sufixo fictício.
-<<<<<<< HEAD
-- O processo escuta apenas em loopback. O proxy público fornece HTTPS, define
-  `X-Real-IP` a partir da conexão recebida e encaminha para a porta local; o
-  login limita tentativas por cliente e globalmente. Tailscale Serve continua
-  disponível como rota privada. Preserve o isolamento dos usuários `helio`,
-  `gh-agents` e `vpsdash`. A chave `gh-agents` só lê as units e reinicia ou
-  drena as próprias `actions.runner.*` por `systemctl --user`, sem sudo; a
-  chave de `helio` continua somente leitura.
-=======
 - O processo escuta apenas em loopback, em dois listeners. `listen`
   (`127.0.0.1:8484`) recebe o proxy público, que fornece HTTPS, define
   `X-Real-IP` a partir da conexão recebida e encaminha para essa porta; o
@@ -37,8 +28,9 @@ fixam comportamento visível e linguagem da interface.
   chave própria por host (`interactive_key_file`, criada por
   `scripts/setup-interactive-key.sh`), autorizada em `helio` com
   `restrict,pty`, sem encaminhamento de porta, agente ou X11, e nunca
-  reutiliza uma chave de coleta.
->>>>>>> 4a91175 (docs: describe the private interactive contract)
+  reutiliza uma chave de coleta. A chave `gh-agents` só lê as units e
+  reinicia ou drena as próprias `actions.runner.*` por `systemctl --user`,
+  sem sudo.
 - `AGENT_RUNNER` e `CI_RUNNER` são as únicas variáveis que o painel altera.
   Um repositório só mostra o switch quando seu workflow usa o padrão
   `vars.X || default` e foi marcado como verificado no inventário.

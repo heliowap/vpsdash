@@ -205,7 +205,6 @@ autenticação às portas 587 e 465 expiraram após 8 s. Porta, TLS e mecanismos
 de auth continuam sem confirmação; verificar serviço e firewall no host de
 e-mail antes de criar a conta e ativar o canal.
 
-<<<<<<< HEAD
 ## Operação de units de runner (fase de operações, `v0.2`)
 
 Restart e drenagem das units `actions.runner.<runner-name>.service` do
@@ -248,10 +247,7 @@ Restart e drenagem das units `actions.runner.<runner-name>.service` do
   `.../drain/cancel`, com sessão e CSRF. Só aceita units nativas já
   observadas em um host de `runner_unit_hosts`; uma operação por unit.
 
-## Isolamento (inalterado do conceito)
-=======
 ## Isolamento
->>>>>>> 4a91175 (docs: describe the private interactive contract)
 
 Usuário `vpsdash` próprio; chaves SSH em `~vpsdash/.ssh` (ed25519 por host,
 `command=` restrito onde possível). A coleta lê tmux de `helio` via SSH

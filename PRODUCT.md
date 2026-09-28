@@ -11,17 +11,12 @@ web
 Confirmed by spec (`docs/specs/2026-09-24-vps-dashboard-design.md`): single Go
 binary serving API + embedded React/Vite SPA (`embed.FS`), SQLite local store,
 and `x/crypto/ssh` pool. Collector SSH keys are unique per host and limited
-<<<<<<< HEAD
 by a Python 3 forced command that accepts only read operations; the separate
-`gh-agents` key may also restart or drain that account's own runner units. The terminal
-bridge is a later phase. No Node in production. The service binds to loopback;
-=======
-by a Python 3 forced command that accepts only read operations. The web
-terminal, tmux attach, and host snippets use a separate per-host key
+`gh-agents` key may also restart or drain that account's own runner units. The
+web terminal, tmux attach, and host snippets use a separate per-host key
 (`restrict,pty`) and exist only on a second loopback listener reached by
 Tailscale Serve, behind password step-up and an audit log. No Node in
 production. The service binds to loopback;
->>>>>>> 4a91175 (docs: describe the private interactive contract)
 a public HTTPS reverse proxy serves the login page, and `tailscale serve` can
 also provide private tailnet access.
 
