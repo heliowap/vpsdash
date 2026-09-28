@@ -247,11 +247,60 @@ Restart e drenagem das units `actions.runner.<runner-name>.service` do
   `.../drain/cancel`, com sessão e CSRF. Só aceita units nativas já
   observadas em um host de `runner_unit_hosts`; uma operação por unit.
 
-## Isolamento (inalterado do conceito)
+## Isolamento
 
 Usuário `vpsdash` próprio; chaves SSH em `~vpsdash/.ssh` (ed25519 por host,
-`command=` restrito onde possível). O painel lê tmux de `helio` via SSH
-read-only — sem escrita fora de `send-keys` (v2, por trás de confirmação).
+`command=` restrito onde possível). A coleta lê tmux de `helio` via SSH
+read-only pela ponte `ssh-readonly.py`, que não muda.
+
+## Terminal, attach e snippets (v0.2, rota privada)
+
+Emenda de 2026-09-27 (issues #5, #6 e #14). Decisões do dono:
+
+- **Dois listeners em loopback.** `listen` (`127.0.0.1:8484`) atende o
+  proxy público; `private_listen` (`127.0.0.1:8485`, desligado se ausente)
+  atende só o Tailscale Serve. As rotas interativas (`/api/step-up`,
+  `/api/interactive`, `/api/terminal/tickets`, `/api/terminal/ws`,
+  `/api/hosts/{id}/snippets/run`) existem apenas no mux privado; o público
+  responde 404. Nenhum cabeçalho participa da decisão. `/api/session` e
+  `/api/dashboard` informam `private` conforme o listener.
+- **Reautenticação.** Senha de novo antes de terminal, attach ou snippet;
+  vale 10 min, fica em memória ligada à sessão (HMAC do cookie) e usa os
+  limites do login. Rotas mutáveis exigem CSRF; o WebSocket usa ticket de
+  uso único (30 s, ligado à sessão) e `Origin` igual ao `Host`.
+- **Chave separada.** `interactive_key_file` por host, nunca igual a uma
+  chave de coleta, autorizada em `helio` com `restrict,pty`
+  (`scripts/setup-interactive-key.sh`). Host sem a chave não oferece acesso.
+  Com a chave, `ssh_user` precisa ser `helio`; a validação e o script
+  recusam vazio, `root`, `gh-agents`, `vpsdash`, contas de
+  `runner_unit_hosts` e qualquer outra conta.
+- **Terminal.** xterm.js (build web) → WebSocket (`github.com/coder/websocket`)
+  → PTY SSH (`x/crypto/ssh`); sem `creack/pty`, pois o PTY é remoto.
+  Mensagens binárias levam bytes; texto leva `resize`, `ready` e `exit`.
+  Até 4 sessões interativas, fechamento após 15 min sem digitação, ping a
+  cada 30 s. Clique padrão abre no navegador; "Terminal local" mostra o
+  comando `ssh`.
+- **Attach.** `tmux attach-session -r -t =<sessão>` por padrão; escrita é
+  segunda opção com confirmação (`confirm_write`). A sessão precisa constar
+  de `tmux_sessions` para aquele host.
+- **Snippets.** Lista fixa `{name, argv, timeout_seconds?}` por host no
+  inventário; o pedido traz só o nome. `argv` vai palavra a palavra entre
+  aspas simples; timeout padrão 30 s (máx. 300 s), saída limitada a 64 KiB.
+- **Auditoria.** Migração 11:
+
+```sql
+CREATE TABLE audit_log (
+  id        INTEGER PRIMARY KEY,
+  ts        INTEGER NOT NULL,
+  action    TEXT NOT NULL,   -- step_up|terminal|attach_ro|attach_rw|snippet
+  host_id   TEXT NOT NULL DEFAULT '',
+  target    TEXT NOT NULL DEFAULT '',   -- sessão tmux ou nome do snippet
+  client_ip TEXT NOT NULL DEFAULT '',
+  outcome   TEXT NOT NULL    -- ok|denied|failed|closed
+);
+```
+
+  Nunca guarda teclas nem saída. Retenção de 90 dias na poda noturna.
 
 ## Acesso a arquivos (v0.2, issue #8)
 

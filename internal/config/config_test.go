@@ -156,3 +156,84 @@ func TestValidateFileRoots(t *testing.T) {
 		})
 	}
 }
+
+func TestInteractiveInventoryRules(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	host := func(extra string) string {
+		return `{"id":"a","tailnet_name":"a.example.ts.net","kind":"vps","ssh_user":"helio","ssh_key_file":"/keys/a"` + extra + `}`
+	}
+	for _, tc := range []struct {
+		name, data string
+		valid      bool
+	}{
+		{"private listener", `{"private_listen":"127.0.0.1:8485","hosts":[` + host(`,"interactive_key_file":"/keys/a-interactive","snippets":[{"name":"Uso de disco","argv":["df","-h","/"]}]`) + `]}`, true},
+		{"public private listener", `{"private_listen":"0.0.0.0:8485"}`, false},
+		{"same listener", `{"listen":"127.0.0.1:8484","private_listen":"127.0.0.1:8484"}`, false},
+		{"collector key reused", `{"hosts":[` + host(`,"interactive_key_file":"/keys/a"`) + `]}`, false},
+		{"runner key reused", `{"hosts":[` + host(`,"interactive_key_file":"/keys/runner"`) + `],"runner_unit_hosts":[{"host_id":"a","ssh_user":"gh-agents","ssh_key_file":"/keys/runner"}]}`, false},
+		{"relative key", `{"hosts":[` + host(`,"interactive_key_file":"keys/i"`) + `]}`, false},
+		{"snippets without key", `{"hosts":[` + host(`,"snippets":[{"name":"x","argv":["true"]}]`) + `]}`, false},
+		{"empty argv", `{"hosts":[` + host(`,"interactive_key_file":"/keys/i","snippets":[{"name":"x","argv":[]}]`) + `]}`, false},
+		{"newline argument", `{"hosts":[` + host(`,"interactive_key_file":"/keys/i","snippets":[{"name":"x","argv":["sh","a\nb"]}]`) + `]}`, false},
+		{"duplicate name", `{"hosts":[` + host(`,"interactive_key_file":"/keys/i","snippets":[{"name":"x","argv":["true"]},{"name":"x","argv":["false"]}]`) + `]}`, false},
+		{"timeout too long", `{"hosts":[` + host(`,"interactive_key_file":"/keys/i","snippets":[{"name":"x","argv":["true"],"timeout_seconds":301}]`) + `]}`, false},
+		{"presence host", `{"hosts":[{"id":"p","tailnet_name":"p.example.ts.net","kind":"presence","interactive_key_file":"/keys/p"}]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(file, []byte(tc.data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(file)
+			if (err == nil) != tc.valid {
+				t.Fatalf("config valid = %t, error = %v", tc.valid, err)
+			}
+		})
+	}
+}
+
+func TestInteractiveUserIsolation(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	inventory := func(user, runners string) string {
+		return `{"hosts":[{"id":"a","tailnet_name":"a.example.ts.net","kind":"vps","ssh_user":"` + user +
+			`","ssh_key_file":"/keys/a","interactive_key_file":"/keys/a-interactive"}],"runner_unit_hosts":[` + runners + `]}`
+	}
+	runner := func(user string) string {
+		return `{"host_id":"a","ssh_user":"` + user + `","ssh_key_file":"/keys/runner"}`
+	}
+	for _, tc := range []struct {
+		name, data string
+		valid      bool
+	}{
+		{"operator", inventory("helio", runner("gh-agents")), true},
+		{"operator without runners", inventory("helio", ""), true},
+		{"root", inventory("root", ""), false},
+		{"fleet account", inventory("gh-agents", ""), false},
+		{"service account", inventory("vpsdash", ""), false},
+		{"empty", inventory("", ""), false},
+		{"other account", inventory("operator", ""), false},
+		{"runner account", inventory("helio", runner("helio")), false},
+		{"collector only", `{"hosts":[{"id":"a","tailnet_name":"a.example.ts.net","kind":"vps","ssh_user":"operator","ssh_key_file":"/keys/a"}]}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(file, []byte(tc.data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(file)
+			if (err == nil) != tc.valid {
+				t.Fatalf("config valid = %t, error = %v", tc.valid, err)
+			}
+		})
+	}
+}
+
+func TestValidateInteractiveUserRefusesIsolatedAccounts(t *testing.T) {
+	c := Config{RunnerUnitHosts: []RunnerUnitHost{{HostID: "a", SSHUser: "fleet"}}}
+	for _, user := range []string{"", "root", "gh-agents", "vpsdash", "fleet", "operator"} {
+		if err := c.ValidateInteractiveUser(user); err == nil {
+			t.Errorf("interactive ssh_user %q accepted", user)
+		}
+	}
+	if err := c.ValidateInteractiveUser(InteractiveUser); err != nil {
+		t.Fatalf("operator account refused: %v", err)
+	}
+}

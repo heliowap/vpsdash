@@ -208,7 +208,7 @@ func (e *Executor) client(host config.Host, poolKey string) (*ssh.Client, error)
 		return nil, errors.New("ssh_user is required")
 	}
 	sshConfig := &ssh.ClientConfig{User: host.SSHUser, Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: known, HostKeyAlgorithms: []string{ssh.KeyAlgoED25519}, Timeout: 10 * time.Second}
-	address := strings.TrimSuffix(host.TailnetName, ".") + ":22"
+	address := host.Address()
 	client, err := ssh.Dial("tcp", address, sshConfig)
 	if err != nil {
 		return nil, err

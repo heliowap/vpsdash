@@ -25,6 +25,7 @@ import (
 	"github.com/heliowap/vpsdash/internal/config"
 	"github.com/heliowap/vpsdash/internal/files"
 	"github.com/heliowap/vpsdash/internal/githubapp"
+	"github.com/heliowap/vpsdash/internal/interactive"
 	"github.com/heliowap/vpsdash/internal/store"
 	"github.com/heliowap/vpsdash/internal/web"
 	"github.com/heliowap/vpsdash/internal/webpush"
@@ -214,23 +215,57 @@ func serve(args []string) error {
 	fileExecutor := collect.NewExecutor()
 	defer fileExecutor.Close()
 	server.Files = &files.Service{Config: cfg, Remote: fileExecutor}
-	httpServer := &http.Server{Addr: cfg.Listen, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 90 * time.Second}
-	listener, err := net.Listen("tcp", cfg.Listen)
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	log.Printf("vpsdash %s listening on %s", version, cfg.Listen)
-	go func() {
-		<-ctx.Done()
-		shutdown, done := context.WithTimeout(context.Background(), 10*time.Second)
-		defer done()
-		_ = httpServer.Shutdown(shutdown)
-	}()
-	err = httpServer.Serve(listener)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	// Interactive sessions use each host's interactive_key_file and the same
+	// known_hosts as the collector. Their routes exist only on private_listen.
+	server.Interactive = &interactive.Dialer{KnownHostsFile: filepath.Join(home, ".ssh", "known_hosts")}
+	type endpoint struct {
+		name    string
+		address string
+		handler http.Handler
 	}
-	return err
+	endpoints := []endpoint{{"public", cfg.Listen, server.Handler()}}
+	if cfg.PrivateListen != "" {
+		endpoints = append(endpoints, endpoint{"private", cfg.PrivateListen, server.PrivateHandler()})
+	} else {
+		log.Printf("private_listen not set: terminal, tmux attach, and snippets are disabled")
+	}
+	servers := make([]*http.Server, 0, len(endpoints))
+	errs := make(chan error, len(endpoints))
+	for _, e := range endpoints {
+		listener, err := net.Listen("tcp", e.address)
+		if err != nil {
+			for _, started := range servers {
+				_ = started.Close()
+			}
+			return err
+		}
+		httpServer := &http.Server{Handler: e.handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 90 * time.Second}
+		servers = append(servers, httpServer)
+		log.Printf("vpsdash %s listening on %s (%s)", version, e.address, e.name)
+		go func() { errs <- httpServer.Serve(listener) }()
+	}
+	shutdown := func() {
+		ctx, done := context.WithTimeout(context.Background(), 10*time.Second)
+		defer done()
+		for _, httpServer := range servers {
+			_ = httpServer.Shutdown(ctx)
+		}
+	}
+	select {
+	case <-ctx.Done():
+		shutdown()
+		return nil
+	case err := <-errs:
+		shutdown()
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
 }
 
 type githubAPI interface {

@@ -181,6 +181,16 @@ CREATE TABLE push_deliveries (
 );
 CREATE INDEX idx_push_deliveries_due ON push_deliveries(next_attempt_at);
 CREATE INDEX idx_push_deliveries_alert ON push_deliveries(alert_id);`,
+	`CREATE TABLE audit_log (
+  id INTEGER PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  action TEXT NOT NULL CHECK(action IN ('step_up','terminal','attach_ro','attach_rw','snippet')),
+  host_id TEXT NOT NULL DEFAULT '',
+  target TEXT NOT NULL DEFAULT '',
+  client_ip TEXT NOT NULL DEFAULT '',
+  outcome TEXT NOT NULL CHECK(outcome IN ('ok','denied','failed','closed'))
+);
+CREATE INDEX idx_audit_log_ts ON audit_log(ts);`,
 }
 
 func migrate(db *sql.DB) error {
@@ -413,6 +423,7 @@ func (s *Store) PruneHistory(ctx context.Context, now time.Time) error {
 		// creation date, so a pruned scan must never be listed again.
 		{`DELETE FROM run_scans WHERE created_at < ?`, now.Add(-MinutesRetention - 48*time.Hour).Unix()},
 		{`DELETE FROM runner_unit_ops WHERE finished_at > 0 AND finished_at < ? AND id NOT IN (SELECT MAX(id) FROM runner_unit_ops GROUP BY host_id, unit)`, now.Add(-90 * 24 * time.Hour).Unix()},
+		{`DELETE FROM audit_log WHERE ts < ?`, now.Add(-90 * 24 * time.Hour).Unix()},
 	})
 }
 

@@ -1,10 +1,16 @@
 {
   "listen": "127.0.0.1:8484",
+  "private_listen": "127.0.0.1:8485",
   "database": "/home/vpsdash/vpsdash.db",
   "trust_proxy_header": true,
   "tailscale_serve_host": "sample-vps.example.invalid",
   "hosts": [
-    { "id": "intrador-tech-vps", "tailnet_name": "sample-vps.example.invalid", "kind": "vps", "ssh_user": "helio", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador-tech-vps" },
+    { "id": "intrador-tech-vps", "tailnet_name": "sample-vps.example.invalid", "kind": "vps", "ssh_user": "helio", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador-tech-vps",
+      "interactive_key_file": "/home/vpsdash/.ssh/id_ed25519_interactive_intrador-tech-vps",
+      "snippets": [
+        { "name": "Uso de disco", "argv": ["df", "-h", "/"] },
+        { "name": "Units com falha", "argv": ["systemctl", "--failed", "--no-pager"], "timeout_seconds": 15 }
+      ] },
     { "id": "allmedical-app", "tailnet_name": "sample-app.example.invalid", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_allmedical-app" },
     { "id": "allmedical-mail", "tailnet_name": "sample-mail.example.invalid", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_allmedical-mail" },
     { "id": "intrador", "tailnet_name": "sample-other.example.invalid", "kind": "presence", "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador" }

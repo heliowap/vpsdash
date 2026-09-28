@@ -124,6 +124,20 @@ func (a *Authenticator) Validate(r *http.Request, now time.Time) (string, bool) 
 	return a.csrf(cookie.Value), true
 }
 
+// SessionID returns a stable identifier for a valid session cookie, derived
+// with the session key so it cannot be computed from the cookie alone.
+// Server-side state such as step-up re-authentication is bound to it.
+func (a *Authenticator) SessionID(r *http.Request, now time.Time) (string, bool) {
+	if _, ok := a.Validate(r, now); !ok {
+		return "", false
+	}
+	cookie, err := r.Cookie(CookieName)
+	if err != nil {
+		return "", false
+	}
+	return base64.RawURLEncoding.EncodeToString(a.sign("sid:" + cookie.Value)), true
+}
+
 func (a *Authenticator) csrf(cookieValue string) string {
 	return base64.RawURLEncoding.EncodeToString(a.sign("csrf:" + cookieValue))
 }

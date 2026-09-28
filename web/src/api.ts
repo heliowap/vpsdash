@@ -1,6 +1,6 @@
-import type { Dashboard, FileContent, FileListing, IncidentHistory, JobList, JobLog, Metric, MinutesReport, UnitOp } from './types'
+import type { AuditEntry, Dashboard, FileContent, FileListing, IncidentHistory, InteractiveInfo, JobList, JobLog, Metric, MinutesReport, SnippetResult, TerminalRequest, UnitOp } from './types'
 
-export type SessionState = { authenticated: boolean; csrf: string }
+export type SessionState = { authenticated: boolean; csrf: string; private?: boolean }
 
 export class ApiError extends Error {
   status: number
@@ -49,5 +49,11 @@ export const api = {
   pushUnsubscribe: (endpoint: string, csrf: string) =>
     request<{ subscribed: boolean }>('/api/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint }) }, csrf),
   pushTest: (endpoint: string, csrf: string) =>
-    request<{ sent: boolean }>('/api/push/test', { method: 'POST', body: JSON.stringify({ endpoint }) }, csrf)
+    request<{ sent: boolean }>('/api/push/test', { method: 'POST', body: JSON.stringify({ endpoint }) }, csrf),
+  audit: () => request<AuditEntry[]>('/api/audit'),
+  interactive: () => request<InteractiveInfo>('/api/interactive'),
+  stepUp: (password: string, csrf: string) => request<{ step_up_until: number }>('/api/step-up', { method: 'POST', body: JSON.stringify({ password }) }, csrf),
+  terminalTicket: (body: TerminalRequest, csrf: string) => request<{ ticket: string; local_command: string }>('/api/terminal/tickets', { method: 'POST', body: JSON.stringify(body) }, csrf),
+  runSnippet: (host: string, name: string, csrf: string) =>
+    request<SnippetResult>(`/api/hosts/${encodeURIComponent(host)}/snippets/run`, { method: 'POST', body: JSON.stringify({ name }) }, csrf)
 }
