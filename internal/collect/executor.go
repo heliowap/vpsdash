@@ -92,6 +92,21 @@ func (e *Executor) RunnerUnitCommand(ctx context.Context, host config.Host, acti
 	return output, err
 }
 
+// FileCommand runs one read-only `vpsdash-files` request through the host's
+// SSH bridge. File reads use their own connection so a slow read never
+// delays the collector's transport.
+func (e *Executor) FileCommand(ctx context.Context, host config.Host, command string) (string, error) {
+	if host.Local {
+		return "", errors.New("local hosts are read in process")
+	}
+	if !strings.HasPrefix(command, "vpsdash-files ") || strings.ContainsAny(command, "\x00\r\n") {
+		return "", errors.New("invalid file command")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return e.runRemoteFor(ctx, host, "files:"+host.ID, command, "")
+}
+
 func healthCommand(source, name string) (string, error) {
 	if source != "systemd" && source != "docker" && source != "tmux" {
 		return "", errors.New("unsupported project source")

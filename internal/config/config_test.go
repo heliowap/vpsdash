@@ -55,8 +55,15 @@ func TestLoadRequiresDistinctKeysForRemoteHosts(t *testing.T) {
 }
 
 func TestExampleInventoryIsValid(t *testing.T) {
-	if _, err := Load(filepath.Join("..", "..", "config.example.json")); err != nil {
+	example, err := Load(filepath.Join("..", "..", "config.example.json"))
+	if err != nil {
 		t.Fatalf("example inventory: %v", err)
+	}
+	// install-service.sh copies the example verbatim; file reading must stay opt-in.
+	for _, h := range example.Hosts {
+		if len(h.FileRoots) > 0 {
+			t.Fatalf("example host %s enables file_roots", h.ID)
+		}
 	}
 	c := Config{Listen: "127.0.0.1:8484", TailscaleServeHost: "other.example.invalid", Hosts: []Host{{ID: "vps", TailnetName: "vps.example.invalid", Kind: "presence"}}}
 	if err := c.Validate(); err == nil {
@@ -120,5 +127,32 @@ func TestReadEnvFileRequiresPrivatePermissions(t *testing.T) {
 	vars, err := ReadEnvFile(file)
 	if err != nil || vars["VPSDASH_SESSION_KEY"] != "abc" {
 		t.Fatalf("vars = %v, %v", vars, err)
+	}
+}
+
+func TestValidateFileRoots(t *testing.T) {
+	vps := func(roots ...string) Host {
+		return Host{ID: "a", TailnetName: "a.example.invalid", Kind: "vps", Local: true, FileRoots: roots}
+	}
+	for _, tc := range []struct {
+		name  string
+		host  Host
+		valid bool
+	}{
+		{"none", vps(), true},
+		{"clean roots", vps("/home/operator/Projetos", "/srv/app"), true},
+		{"relative", vps("Projetos"), false},
+		{"filesystem root", vps("/"), false},
+		{"dot dot", vps("/srv/../etc"), false},
+		{"trailing slash", vps("/srv/"), false},
+		{"duplicate", vps("/srv", "/srv"), false},
+		{"presence host", Host{ID: "a", TailnetName: "a.example.invalid", Kind: "presence", FileRoots: []string{"/srv"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (Config{Listen: "127.0.0.1:8484", Hosts: []Host{tc.host}}).Validate()
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid = %t, error = %v", tc.valid, err)
+			}
+		})
 	}
 }

@@ -86,7 +86,14 @@ inline confirmation and an audit record per operation. Drain waits until
 neither GitHub nor the host reports a job, then stops the unit; it cannot
 stop GitHub from assigning a job in the seconds before the stop.
 
-Concept target beyond `v0.1`: file access; xterm.js terminal over SSH PTY;
+`v0.2` file access is read-only: browse folders and view text inside roots
+listed per host in the inventory and confirmed by an operator-owned roots
+file on the host, which the panel cannot widen. Secret-looking names
+(`.env*`, keys, `.ssh`, `.git`, credentials) stay visible but blocked;
+binary, truncated, and blocked states are written out. No upload, edit, or
+delete. Hosts without roots show no file destination.
+
+Concept target beyond `v0.1`: xterm.js terminal over SSH PTY;
 one-click read-only tmux attach; SMTP delivery. The phase B spec explicitly permits tmux attach and alerts in
 `v0.2` without a schema change.
 

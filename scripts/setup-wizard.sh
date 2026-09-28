@@ -352,7 +352,28 @@ mapfile -t planned_remote_hosts < <(jq -r --arg local "$local_host_id" --slurpfi
   | select(.id != $local and (.kind == "vps" or (.ssh_key_file // "") != "" or (.id as $id | $sample_vps | index($id))))
   | .id
 ' "$config_file")
-"$repo_dir/scripts/setup-local-collector.sh"
+# File reading is opt-in. config.example.json has no file_roots, so roots exist
+# only when the operator added them to the private inventory; even then the
+# bridge roots file is written only after an explicit yes (default no) to a
+# prompt listing the exact paths. Declining passes no roots, so the collector
+# script leaves any existing roots file untouched.
+approved_file_roots=()
+approve_file_roots() {
+  local host_id="$1" root
+  local -a roots
+  approved_file_roots=()
+  mapfile -t roots < <(jq -r --arg id "$host_id" '.hosts[] | select(.id == $id) | .file_roots[]?' "$config_file")
+  (( ${#roots[@]} )) || return 0
+  say "O inventário define file_roots para $host_id:"
+  for root in "${roots[@]}"; do say "  $root"; done
+  if confirm "Autorizar a leitura somente dessas pastas em $host_id?"; then
+    approved_file_roots=("${roots[@]}")
+  else
+    pending "Leitura de arquivos em $host_id não autorizada; o arquivo de raízes não foi alterado."
+  fi
+}
+approve_file_roots "$local_host_id"
+"$repo_dir/scripts/setup-local-collector.sh" "${approved_file_roots[@]}"
 if getent passwd gh-agents >/dev/null; then
   "$repo_dir/scripts/setup-runner-collector.sh"
 else
@@ -392,7 +413,8 @@ for host_id in "${planned_remote_hosts[@]}"; do
     continue
   fi
   ask REMOTE_USER "Usuário SSH de $host_id:"
-  "$repo_dir/scripts/setup-remote-collector.sh" "$host_id" "$REMOTE_USER" "$HOST_FINGERPRINT"
+  approve_file_roots "$host_id"
+  "$repo_dir/scripts/setup-remote-collector.sh" "$host_id" "$REMOTE_USER" "$HOST_FINGERPRINT" "${approved_file_roots[@]}"
   activate_remote "$host_id" "$REMOTE_USER"
   unset REMOTE_USER HOST_FINGERPRINT
 done

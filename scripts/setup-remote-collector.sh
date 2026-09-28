@@ -6,16 +6,24 @@ repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 host_id="${1:-}"
 remote_user="${2:-}"
 expected_fingerprint="${3:-}"
+# Optional directories the panel may browse read-only on the remote host.
+file_roots=("${@:4}")
 service_home=/home/vpsdash
 
 if (( EUID != 0 )); then
   echo 'Execute este script com sudo.' >&2
   exit 1
 fi
+for root in "${file_roots[@]}"; do
+  if [[ ! "$root" =~ ^(/[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*)+$ || "$root" =~ /\.\.?(/|$) ]]; then
+    echo "Raiz de arquivos inválida: $root (use um caminho absoluto, sem / final nem ..)" >&2
+    exit 2
+  fi
+done
 if [[ ! "$host_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ||
       ! "$remote_user" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ||
       ! "$expected_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]; then
-  echo 'Uso: setup-remote-collector.sh <host-id> <usuario-ssh> <fingerprint-ed25519>' >&2
+  echo 'Uso: setup-remote-collector.sh <host-id> <usuario-ssh> <fingerprint-ed25519> [raiz-de-arquivos...]' >&2
   echo 'No console do host remoto: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256' >&2
   echo 'Informe apenas o trecho que começa com SHA256:.' >&2
   exit 2
@@ -84,6 +92,16 @@ as_operator ssh "${ssh_options[@]}" "$target" 'install -d -m 700 "$HOME/.local/b
 as_operator scp "${ssh_options[@]}" "$repo_dir/scripts/ssh-readonly.py" "$target:.local/bin/vpsdash-ssh-readonly.py"
 # shellcheck disable=SC2016 # $HOME is expanded on the remote host.
 as_operator ssh "${ssh_options[@]}" "$target" 'chmod 755 "$HOME/.local/bin/vpsdash-ssh-readonly.py"'
+# The bridge reads file roots only from this file owned by the remote
+# account; the panel cannot change it over SSH.
+if (( ${#file_roots[@]} )); then
+  # shellcheck disable=SC2016 # $HOME is expanded on the remote host.
+  printf '%s\n' "${file_roots[@]}" | as_operator ssh "${ssh_options[@]}" "$target" \
+    'umask 077 && install -d -m 700 "$HOME/.config/vpsdash-files" && cat > "$HOME/.config/vpsdash-files/roots.new" && mv -f "$HOME/.config/vpsdash-files/roots.new" "$HOME/.config/vpsdash-files/roots"'
+  echo "Leitura de arquivos autorizada em $host_id: ${file_roots[*]}"
+else
+  echo "Raízes de arquivos de $host_id inalteradas (nenhuma informada)."
+fi
 
 entry="restrict,command=\"/usr/bin/python3 -I $remote_home/.local/bin/vpsdash-ssh-readonly.py\" $public_key"
 remote_auth_py='import pathlib,sys; p=pathlib.Path.home()/".ssh"/"authorized_keys"; entry=sys.stdin.read().strip(); blob=entry.rsplit(" ",2)[1]; lines=p.read_text().splitlines() if p.exists() else []; matches=[line for line in lines if blob in line]; sys.exit("Chave já autorizada com outro comando") if matches and matches != [entry] else None; p.write_text("\n".join(lines+[entry])+"\n") if not matches else None; p.chmod(0o600)'

@@ -30,6 +30,11 @@ entre duas leituras; o terminal web e o
 attach ficam para `v0.2`, conforme a especificação. A interface não afirma
 que um host está saudável antes da primeira leitura.
 
+A aba Arquivos navega e exibe, somente para leitura, as pastas listadas em
+`file_roots` de cada VPS no inventário (veja [Arquivos](#arquivos-somente-leitura)).
+A leitura é opcional: o `config.example.json` não traz `file_roots`. Sem
+`file_roots`, a leitura fica desativada e a aba não aparece.
+
 O painel pode ser instalado na tela inicial como PWA pelo navegador. O service
 worker guarda somente a interface estática; chamadas
 `/api/` continuam na rede e nunca são servidas do cache. Sem conexão, o
@@ -148,7 +153,8 @@ scripts/setup-local-collector.sh
 ```
 
 O script gera uma chave Ed25519 exclusiva deste host, autoriza somente os
-comandos de métricas, descoberta, sessões e health em `helio`, confere a host
+comandos de métricas, descoberta, sessões, health e leitura de arquivos nas
+raízes do host em `helio`, confere a host
 key local e testa uma leitura real. Ele pode ser executado novamente sem
 duplicar a autorização. Para outros hosts Linux, instale
 `scripts/ssh-readonly.py` na conta SSH remota, gere uma chave Ed25519 diferente
@@ -172,6 +178,73 @@ confirmadas.
 
 O painel executa cada coleta com timeout de 10 s. Windows entra apenas pela
 presença Tailscale, sem SSH.
+
+### Arquivos (somente leitura)
+
+A aba Arquivos lista pastas e exibe arquivos de texto dentro de raízes
+explícitas. Nada é gravado, movido ou apagado. O acesso exige duas listas
+que concordem:
+
+1. `file_roots` do host no inventário do painel. O painel recusa qualquer
+   caminho fora dessas raízes antes de contatar o host. Sem `file_roots`, a
+   leitura fica desativada e a aba não aparece. O exemplo e a instalação
+   padrão não definem o campo; para ativar, edite o inventário privado
+   (`sudoedit /home/vpsdash/.config/vpsdash/config.json`) e acrescente o
+   campo à VPS desejada:
+
+   ```json
+   { "id": "intrador-tech-vps", "tailnet_name": "sample-vps.example.invalid", "kind": "vps", "ssh_user": "helio",
+     "ssh_key_file": "/home/vpsdash/.ssh/id_ed25519_intrador-tech-vps",
+     "file_roots": ["/home/helio/Projetos"] }
+   ```
+
+   Confira com `sudo -u vpsdash /home/vpsdash/bin/vpsdash check-config
+   --config /home/vpsdash/.config/vpsdash/config.json`.
+2. O arquivo `~/.config/vpsdash-files/roots` da conta SSH no próprio host
+   (uma raiz absoluta por linha, dono dessa conta ou root, sem escrita para
+   grupo ou outros, inclusive na pasta). A ponte `ssh-readonly.py` lê as raízes
+   somente desse arquivo; o painel não consegue ampliá-las pela conexão SSH.
+   Para fixar outro caminho, acrescente `--file-roots /caminho/absoluto` ao
+   `command=` da chave em `authorized_keys`.
+
+Os scripts de coleta gravam esse arquivo quando recebem raízes como
+argumentos adicionais; sem argumentos, mantêm o arquivo existente:
+
+```bash
+scripts/setup-local-collector.sh /home/helio/Projetos
+sudo scripts/setup-remote-collector.sh <host-id> <usuario-ssh> <fingerprint-SHA256> /srv/app
+```
+
+Quando o inventário tem `file_roots` para um host, o assistente mostra as
+pastas exatas e só grava o arquivo de raízes se você responder sim (o padrão
+é não). Sem `file_roots` ou com a resposta não, nenhum arquivo de raízes é
+criado ou alterado. Para
+desativar a leitura em um host, remova `file_roots` do inventário e apague
+`~/.config/vpsdash-files/roots` nesse host.
+
+Regras aplicadas no host, pela ponte, e no painel para hosts `local: true`:
+
+- O caminho precisa ser absoluto e normalizado: `..`, `.`, `//` e `/` final
+  são recusados. Depois de resolver links simbólicos, o destino real precisa
+  continuar dentro de uma raiz; o arquivo é aberto sem seguir links e a ponte
+  confere o caminho aberto em `/proc/self/fd`.
+- Nomes com aparência de segredo aparecem na listagem como **bloqueado**, sem
+  tamanho nem data, e nunca são lidos: `.env*`, `*.env`, `*.pem`, `*.key`,
+  `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`, `*.gpg`, `id_*`,
+  `*secret*`, `*credential*`, `*password*`, `*passwd*`, `*_history`, `.netrc`,
+  `.npmrc`, `.pypirc`, `.pgpass`, `.htpasswd`, `.vault-token` e qualquer
+  caminho dentro de `.ssh`, `.gnupg`, `.git`, `.aws`, `.azure`, `.kube`,
+  `.docker` ou `.password-store`. Links que apontam para fora da raiz também
+  aparecem como bloqueados.
+- Cada leitura devolve no máximo 512 KB. O painel informa **truncado** e
+  carrega o trecho seguinte sob pedido. Conteúdo com byte nulo ou que não é
+  UTF-8 aparece como **binário** e não é exibido. Pastas mostram até 1000
+  itens e avisam quando há mais.
+
+Com `local: true`, o próprio processo `vpsdash` lê os arquivos com as
+permissões da conta `vpsdash` e usa somente o `file_roots` do inventário. Em
+produção, prefira a ponte SSH, que lê com a conta do operador e mantém as
+raízes fora do alcance do painel.
 
 Para monitorar as units do `gh-agents` no host local, configure uma segunda
 chave, exclusiva da conta da frota. Execute como `helio` ou com `sudo`; o

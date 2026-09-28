@@ -1,10 +1,11 @@
-import type { Dashboard, IncidentHistory, JobList, JobLog, Metric, MinutesReport, UnitOp } from './types'
+import type { Dashboard, FileContent, FileListing, IncidentHistory, JobList, JobLog, Metric, MinutesReport, UnitOp } from './types'
 
 export type SessionState = { authenticated: boolean; csrf: string }
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) { super(message); this.status = status }
+  code: string
+  constructor(status: number, message: string, code = '') { super(message); this.status = status; this.code = code }
 }
 
 async function request<T>(path: string, init: RequestInit = {}, csrf = ''): Promise<T> {
@@ -14,7 +15,7 @@ async function request<T>(path: string, init: RequestInit = {}, csrf = ''): Prom
     headers: { 'Content-Type': 'application/json', ...(csrf ? { 'X-CSRF-Token': csrf } : {}), ...init.headers }
   })
   const value = await response.json().catch(() => ({}))
-  if (!response.ok) throw new ApiError(response.status, value.error || `Erro HTTP ${response.status}`)
+  if (!response.ok) throw new ApiError(response.status, value.error || `Erro HTTP ${response.status}`, value.code || '')
   return value as T
 }
 
@@ -26,6 +27,10 @@ export const api = {
   minutes: () => request<MinutesReport>('/api/minutes'),
   metrics: (id: string) => request<Metric[]>(`/api/hosts/${encodeURIComponent(id)}/metrics`),
   projectIncidents: (id: number) => request<IncidentHistory>(`/api/projects/${id}/incidents`),
+  listFiles: (host: string, path: string) =>
+    request<FileListing>(`/api/hosts/${encodeURIComponent(host)}/files?${new URLSearchParams({ path })}`),
+  readFile: (host: string, path: string, offset: number) =>
+    request<FileContent>(`/api/hosts/${encodeURIComponent(host)}/file?${new URLSearchParams({ path, offset: String(offset) })}`),
   updateProject: (id: number, body: { monitored: boolean; health_url: string; expected: string[] }, csrf: string) =>
     request<{ saved: boolean }>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) }, csrf),
   switchRunner: (repo: string, variable: 'AGENT_RUNNER' | 'CI_RUNNER', label: string, csrf: string) =>

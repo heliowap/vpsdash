@@ -23,6 +23,7 @@ import (
 	"github.com/heliowap/vpsdash/internal/auth"
 	"github.com/heliowap/vpsdash/internal/collect"
 	"github.com/heliowap/vpsdash/internal/config"
+	"github.com/heliowap/vpsdash/internal/files"
 	"github.com/heliowap/vpsdash/internal/githubapp"
 	"github.com/heliowap/vpsdash/internal/store"
 	"github.com/heliowap/vpsdash/internal/web"
@@ -162,6 +163,9 @@ func serve(args []string) error {
 	server := api.New(cfg, st, collector, gh, a)
 	server.SMTPProvisioned = mailer != nil
 	server.Static = http.FS(web.Dist())
+	fileExecutor := collect.NewExecutor()
+	defer fileExecutor.Close()
+	server.Files = &files.Service{Config: cfg, Remote: fileExecutor}
 	httpServer := &http.Server{Addr: cfg.Listen, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 90 * time.Second}
 	listener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
