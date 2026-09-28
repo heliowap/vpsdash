@@ -84,9 +84,15 @@ if len(matches) != 1:
     raise SystemExit("Host não encontrado ou duplicado na tailnet: " + host_id)
 print(matches[0])
 ' "$host_id")"
-  host_key="$(ssh-keyscan -T 5 -t ed25519 "$tailnet_name" 2>/dev/null | awk '$2 == "ssh-ed25519" {print $2 " " $3}')"
+  # A dual-stack host answers once per address; identical keys collapse to
+  # one line, while two different keys still abort the setup.
+  host_key="$(ssh-keyscan -T 5 -t ed25519 "$tailnet_name" 2>/dev/null | awk '$2 == "ssh-ed25519" {print $2 " " $3}' | sort -u)"
+  if [[ -z "$host_key" ]]; then
+    echo 'Não foi possível obter a host key Ed25519.' >&2
+    exit 1
+  fi
   if [[ "$(printf '%s\n' "$host_key" | wc -l)" -ne 1 ]]; then
-    echo 'Não foi possível obter uma única host key Ed25519.' >&2
+    echo 'O host respondeu com host keys Ed25519 diferentes; nada foi instalado.' >&2
     exit 1
   fi
   actual_fingerprint="$(printf '%s\n' "$host_key" | ssh-keygen -lf - -E sha256 | awk '{print $2}')"
