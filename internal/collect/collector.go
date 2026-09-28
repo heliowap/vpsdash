@@ -36,6 +36,8 @@ type Collector struct {
 	Config     config.Config
 	Store      *store.Store
 	Executor   HostExecutor
+	Units      RunnerUnitCommander
+	ops        *unitOps
 	healthHTTP *http.Client
 	GitHub     FleetAPI
 	Minutes    MinutesAPI
@@ -82,7 +84,9 @@ func New(c config.Config, s *store.Store, github FleetAPI) *Collector {
 	for _, h := range c.Hosts {
 		locks[h.ID] = &sync.Mutex{}
 	}
-	collector := &Collector{Config: c, Store: s, Executor: NewExecutor(), healthHTTP: newHealthHTTPClient(c.Hosts), GitHub: github, hostLocks: locks, queued: map[string][]githubapp.WorkflowRun{}, errors: map[string]string{}}
+	executor := NewExecutor()
+	ops := &unitOps{active: map[string]*activeUnitOp{}, poll: defaultDrainPoll, timeout: defaultDrainTimeout, base: context.Background()}
+	collector := &Collector{Config: c, Store: s, Executor: executor, Units: executor, ops: ops, healthHTTP: newHealthHTTPClient(c.Hosts), GitHub: github, hostLocks: locks, queued: map[string][]githubapp.WorkflowRun{}, errors: map[string]string{}}
 	if minutes, ok := github.(MinutesAPI); ok {
 		collector.Minutes = minutes
 	}
@@ -90,6 +94,10 @@ func New(c config.Config, s *store.Store, github FleetAPI) *Collector {
 }
 
 func (c *Collector) Start(ctx context.Context) error {
+	c.ops.base = ctx
+	if err := c.Store.AbandonRunningUnitOps(ctx, time.Now()); err != nil {
+		return err
+	}
 	for _, h := range c.Config.Hosts {
 		if err := c.Store.UpsertHost(ctx, store.Host{ID: h.ID, TailnetName: h.TailnetName, Kind: h.Kind, SSHUser: h.SSHUser}); err != nil {
 			return err

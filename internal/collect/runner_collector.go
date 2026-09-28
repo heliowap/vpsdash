@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/heliowap/vpsdash/internal/config"
+	"github.com/heliowap/vpsdash/internal/store"
 )
 
 func (c *Collector) runnerUnitLoop(ctx context.Context, account config.RunnerUnitHost) {
@@ -30,9 +31,19 @@ func (c *Collector) runnerUnitLoop(ctx context.Context, account config.RunnerUni
 }
 
 func (c *Collector) pollRunnerUnits(ctx context.Context, account config.RunnerUnitHost) error {
+	units, err := c.readRunnerUnits(ctx, account)
+	if err != nil {
+		return err
+	}
+	return c.saveRunnerUnits(ctx, account.HostID, units, time.Now())
+}
+
+// readRunnerUnits reads the unit states through the gh-agents account. The
+// caller holds the host lock.
+func (c *Collector) readRunnerUnits(ctx context.Context, account config.RunnerUnitHost) (map[string]RunnerUnit, error) {
 	h, ok := c.host(account.HostID)
 	if !ok {
-		return fmt.Errorf("unknown runner unit host %s", account.HostID)
+		return nil, fmt.Errorf("unknown runner unit host %s", account.HostID)
 	}
 	h.ID = "runner-units:" + h.ID // SSH clients are cached by ID; this account needs its own client.
 	h.SSHUser = account.SSHUser
@@ -40,13 +51,9 @@ func (c *Collector) pollRunnerUnits(ctx context.Context, account config.RunnerUn
 	h.Local = false
 	raw, err := c.Executor.Run(ctx, h, RunnerUnitsScript)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	units, err := ParseRunnerUnits(raw)
-	if err != nil {
-		return err
-	}
-	return c.saveRunnerUnits(ctx, account.HostID, units, time.Now())
+	return ParseRunnerUnits(raw)
 }
 
 func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units map[string]RunnerUnit, now time.Time) error {
@@ -54,12 +61,44 @@ func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units ma
 	if err != nil {
 		return err
 	}
+	ops, err := c.Store.LatestUnitOps(ctx)
+	if err != nil {
+		return err
+	}
+	latest := map[string]store.UnitOp{}
+	for _, op := range ops {
+		if op.HostID == hostID {
+			latest[op.Unit] = op
+		}
+	}
 	for _, unit := range units {
 		p, err := c.Store.UpsertNativeRunnerUnit(ctx, hostID, unit.Name)
 		if err != nil {
 			return err
 		}
+		if op := latest[unit.Name]; op.StopUnconfirmed {
+			// A drain ended without knowing whether its stop reached
+			// systemd. This reading settles it before the check is kept.
+			stopped := unit.Stopped()
+			if err := c.Store.ResolveDrainStop(ctx, op.ID, stopped, resolvedDrainDetail(op, unit)); err != nil {
+				return err
+			}
+			if stopped {
+				op.Status = "done"
+			}
+			op.StopUnconfirmed = false
+			latest[unit.Name] = op
+		}
 		detail := unit.LoadState + "/" + unit.ActiveState
+		if reason := plannedStopReason(latest[unit.Name], unit, now); reason != "" && !unit.Healthy() {
+			// The operator stopped or is restarting this unit on purpose:
+			// keep the reading, but as a neutral row that neither counts
+			// toward nor extends a project_down failure streak.
+			if err := c.Store.RecordPlannedCheck(ctx, p.ID, detail+" ("+reason+")", now); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := c.recordProjectCheck(ctx, p, unit.Healthy(), detail, now); err != nil {
 			return err
 		}
@@ -75,4 +114,34 @@ func (c *Collector) saveRunnerUnits(ctx context.Context, hostID string, units ma
 		}
 	}
 	return nil
+}
+
+// restartSettleGrace covers a unit systemd still reports as activating or
+// deactivating right after a panel restart finished.
+const restartSettleGrace = 2 * time.Minute
+
+// plannedStopReason explains why a non-active reading is expected: the unit
+// was drained, a panel operation on it is still running, or systemd is still
+// settling a restart the panel just finished. It returns "" otherwise.
+func plannedStopReason(op store.UnitOp, unit RunnerUnit, now time.Time) string {
+	switch {
+	case op.ID == 0:
+		return ""
+	case op.Drained():
+		return "drenada pelo painel"
+	case op.Status == "running":
+		return "operação do painel em andamento"
+	case op.Action == "restart" && op.Status == "done" && unit.Transitioning() &&
+		now.Sub(time.Unix(op.FinishedAt, 0)) < restartSettleGrace:
+		return "reiniciada pelo painel"
+	}
+	return ""
+}
+
+func resolvedDrainDetail(op store.UnitOp, unit RunnerUnit) string {
+	state := unit.LoadState + "/" + unit.ActiveState
+	if unit.Stopped() {
+		return "O pedido de parada foi enviado antes do fim da drenagem, e a leitura seguinte do systemd mostrou a unit " + state + ". Ela não recebe novos jobs até ser reiniciada."
+	}
+	return "O pedido de parada foi enviado antes do fim da drenagem, mas a leitura seguinte do systemd mostrou a unit " + state + ": ela não foi parada."
 }

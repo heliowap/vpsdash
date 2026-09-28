@@ -155,6 +155,16 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
 
 .runner-row, .session-row, .queue-row { display: flex; align-items: center; gap: 13px; min-height: 67px; border-bottom: 1px solid var(--rule); padding: 12px 0; }
 .queue-row { text-decoration: none; }
+.unit-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 14px; border-bottom: 1px solid var(--rule); padding: 13px 0; }
+.unit-head { display: flex; align-items: center; gap: 13px; min-width: 0; }
+.unit-copy { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.unit-copy strong { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.unit-copy small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.unit-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.unit-confirm > span { line-height: 1.5; overflow-wrap: anywhere; }
+.unit-confirm > div { flex: none; }
+.confirm-warning { color: var(--attention); font-weight: 600; }
+.section-heading p code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
 .queue-row:hover strong { text-decoration: underline; }
 .queue-row > svg, .session-row > svg { color: var(--action); flex: none; }
 .queue-row > svg:last-child { color: var(--muted); }
@@ -302,6 +312,8 @@ input:not([type='checkbox']):focus, select:focus { border-color: var(--action); 
   .minutes-measures { gap: 6px; }
   .minutes-measures span { text-align: left; }
   .minutes-measures b { font-size: 15px; }
+  .unit-row { grid-template-columns: 1fr; }
+  .unit-actions { justify-content: flex-start; padding-left: 22px; }
   .preset-row { align-items: start; }
   .log-sheet { padding-inline: 12px; }
   .log-sheet header { align-items: flex-start; }

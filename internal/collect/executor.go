@@ -64,6 +64,34 @@ func (e *Executor) Check(ctx context.Context, host config.Host, source, name str
 	return e.runRemoteFor(ctx, host, "health:"+host.ID, command, "")
 }
 
+// ErrRunnerJobRunning is returned when the bridge refuses to drain a unit
+// because its runner still has a job process.
+var ErrRunnerJobRunning = errors.New("runner job still running")
+
+// runnerBusyExit matches EXIT_BUSY in scripts/ssh-readonly.py.
+const runnerBusyExit = 75
+
+// RunnerUnitCommand sends one runner-restart or runner-drain request through
+// the gh-agents forced command. The unit name is validated here and again
+// by the bridge, which runs systemctl with an argument list.
+func (e *Executor) RunnerUnitCommand(ctx context.Context, host config.Host, action, unit string) (string, error) {
+	if (action != "runner-restart" && action != "runner-drain") || !config.IsRunnerServiceName(unit) {
+		return "", errors.New("invalid runner unit command")
+	}
+	if host.Local {
+		return "", errors.New("runner unit commands require the gh-agents SSH key")
+	}
+	// A restart can wait for systemd's stop timeout of the runner unit.
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+	defer cancel()
+	output, err := e.runRemoteFor(ctx, host, "runner-ops:"+host.ID, action+" "+unit, "")
+	var exit *ssh.ExitError
+	if errors.As(err, &exit) && exit.ExitStatus() == runnerBusyExit {
+		return output, ErrRunnerJobRunning
+	}
+	return output, err
+}
+
 func healthCommand(source, name string) (string, error) {
 	if source != "systemd" && source != "docker" && source != "tmux" {
 		return "", errors.New("unsupported project source")
