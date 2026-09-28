@@ -271,6 +271,9 @@ Emenda de 2026-09-27 (issues #5, #6 e #14). Decisões do dono:
 - **Chave separada.** `interactive_key_file` por host, nunca igual a uma
   chave de coleta, autorizada em `helio` com `restrict,pty`
   (`scripts/setup-interactive-key.sh`). Host sem a chave não oferece acesso.
+  Com a chave, `ssh_user` precisa ser `helio`; a validação e o script
+  recusam vazio, `root`, `gh-agents`, `vpsdash`, contas de
+  `runner_unit_hosts` e qualquer outra conta.
 - **Terminal.** xterm.js (build web) → WebSocket (`github.com/coder/websocket`)
   → PTY SSH (`x/crypto/ssh`); sem `creack/pty`, pois o PTY é remoto.
   Mensagens binárias levam bytes; texto leva `resize`, `ready` e `exit`.

@@ -7,7 +7,7 @@
 # read-only collector bridge is not touched.
 #
 #   scripts/setup-interactive-key.sh local
-#   sudo scripts/setup-interactive-key.sh <host-id> <usuario-ssh> <fingerprint-ed25519>
+#   sudo scripts/setup-interactive-key.sh <host-id> helio <fingerprint-ed25519>
 set -euo pipefail
 
 mode="${1:-}"
@@ -16,7 +16,7 @@ service_home=/home/vpsdash
 
 usage() {
   echo 'Uso: setup-interactive-key.sh local' >&2
-  echo '     sudo setup-interactive-key.sh <host-id> <usuario-ssh> <fingerprint-ed25519>' >&2
+  echo '     sudo setup-interactive-key.sh <host-id> helio <fingerprint-ed25519>' >&2
   echo 'No console do host remoto: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256' >&2
   exit 2
 }
@@ -58,6 +58,19 @@ else
         ! "$expected_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]; then
     usage
   fi
+  # Same rule as config.ValidateInteractiveUser: the PTY runs as this
+  # account, so only the operator account is accepted.
+  case "$remote_user" in
+    root|gh-agents|vpsdash)
+      echo "A conta $remote_user é isolada e não recebe acesso interativo; use helio." >&2
+      exit 1
+      ;;
+    helio) ;;
+    *)
+      echo "O acesso interativo só é autorizado para helio, não para $remote_user." >&2
+      exit 1
+      ;;
+  esac
   as_operator() { runuser -u helio -- env HOME=/home/helio "$@"; }
   as_root() { "$@"; }
   as_service() { runuser -u vpsdash -- env HOME=/home/vpsdash "$@"; }

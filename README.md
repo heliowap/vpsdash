@@ -434,8 +434,13 @@ para `helio` com `restrict,pty` (sem encaminhamento de porta, agente ou X11):
 # host local, como helio ou com sudo
 scripts/setup-interactive-key.sh local
 # host remoto; fingerprint obtido no console do próprio host
-sudo scripts/setup-interactive-key.sh <host-id> <usuario-ssh> <fingerprint-SHA256>
+sudo scripts/setup-interactive-key.sh <host-id> helio <fingerprint-SHA256>
 ```
+
+O terminal roda com os direitos da conta de `ssh_user`, por isso um host com
+`interactive_key_file` só é aceito com `ssh_user: "helio"`. O inventário e o
+script recusam conta vazia, `root`, `gh-agents`, `vpsdash`, qualquer conta de
+`runner_unit_hosts` e qualquer outra conta.
 
 O script confere a host key, não duplica a autorização, testa um login e
 mostra o campo a acrescentar ao host no inventário:

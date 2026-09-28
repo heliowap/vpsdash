@@ -42,6 +42,35 @@ type Snippet struct {
 }
 
 const DefaultSnippetTimeout = 30
+
+// InteractiveUser is the only account an interactive key may log in as. The
+// PTY runs with that account's rights, so root, the fleet account
+// (gh-agents), the service account (vpsdash), and any runner_unit_hosts
+// account are refused even if the allow list ever grows.
+const InteractiveUser = "helio"
+
+var isolatedAccounts = map[string]bool{"root": true, "gh-agents": true, "vpsdash": true}
+
+// ValidateInteractiveUser applies the isolation rule for an interactive
+// ssh_user: it must be InteractiveUser and must not be an isolated account
+// or an account the runner collector uses.
+func (c Config) ValidateInteractiveUser(user string) error {
+	if user == "" {
+		return errors.New("ssh_user is required")
+	}
+	if isolatedAccounts[user] {
+		return fmt.Errorf("ssh_user %q is isolated from interactive access", user)
+	}
+	for _, runner := range c.RunnerUnitHosts {
+		if runner.SSHUser == user {
+			return fmt.Errorf("ssh_user %q is a runner_unit_hosts account", user)
+		}
+	}
+	if user != InteractiveUser {
+		return fmt.Errorf("ssh_user %q is not allowed; interactive access logs in only as %s", user, InteractiveUser)
+	}
+	return nil
+}
 const MaxSnippetTimeout = 300
 
 // Address returns the SSH endpoint for the host.
@@ -211,6 +240,9 @@ func (c Config) Validate() error {
 		}
 		if h.Kind != "vps" || h.Local || h.SSHUser == "" {
 			return fmt.Errorf("host %s needs kind vps with ssh_user for interactive access", h.ID)
+		}
+		if err := c.ValidateInteractiveUser(h.SSHUser); err != nil {
+			return fmt.Errorf("host %s: %w", h.ID, err)
 		}
 		if !filepath.IsAbs(h.InteractiveKeyFile) {
 			return fmt.Errorf("host %s needs an absolute interactive_key_file", h.ID)

@@ -28,7 +28,10 @@ fixam comportamento visível e linguagem da interface.
   chave própria por host (`interactive_key_file`, criada por
   `scripts/setup-interactive-key.sh`), autorizada em `helio` com
   `restrict,pty`, sem encaminhamento de porta, agente ou X11, e nunca
-  reutiliza uma chave de coleta. A chave `gh-agents` só lê as units e
+  reutiliza uma chave de coleta. Um host com `interactive_key_file` exige
+  `ssh_user: "helio"`: a validação do inventário e o script recusam vazio,
+  `root`, `gh-agents`, `vpsdash`, qualquer conta de `runner_unit_hosts` e
+  qualquer outra conta. A chave `gh-agents` só lê as units e
   reinicia ou drena as próprias `actions.runner.*` por `systemctl --user`,
   sem sudo.
 - `AGENT_RUNNER` e `CI_RUNNER` são as únicas variáveis que o painel altera.
