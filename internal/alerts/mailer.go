@@ -1,3 +1,4 @@
+// Package alerts sends operator alert notifications.
 package alerts
 
 import (
