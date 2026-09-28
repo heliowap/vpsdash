@@ -263,6 +263,60 @@ func TestLocalCommandQuotesForLocalAndRemoteShell(t *testing.T) {
 	}
 }
 
+func TestRefusedTerminalTicketsAreAudited(t *testing.T) {
+	fx := newInteractiveFixture(t)
+	now := time.Now()
+	fx.server.now = func() time.Time { return now }
+	c := fx.login(fx.private.URL)
+	c.stepUp()
+	other := fx.login(fx.private.URL)
+	countDenied := func(action, target string) int {
+		count := 0
+		for _, entry := range fx.audit() {
+			if entry.Action == action && entry.Target == target && entry.Outcome == "denied" {
+				count++
+			}
+		}
+		return count
+	}
+	refuse := func(c *client, ticket, what string) {
+		t.Helper()
+		if _, response, err := c.dial(ticket, fx.private.URL); err == nil || response == nil || response.StatusCode != 403 {
+			t.Fatalf("%s ticket accepted: %v", what, err)
+		}
+	}
+
+	refuse(c, "ticket-inexistente", "unknown")
+	if got := countDenied("terminal", ""); got != 1 {
+		t.Fatalf("unknown ticket denials = %d, want 1", got)
+	}
+
+	_, foreign := c.ticket(`{"host":"vps","kind":"terminal"}`)
+	refuse(other, foreign, "foreign")
+	refuse(c, foreign, "reused")
+	if got := countDenied("terminal", ""); got != 3 {
+		t.Fatalf("foreign and reused ticket denials = %d, want 3", got)
+	}
+
+	_, expired := c.ticket(`{"host":"vps","kind":"attach","session":"dev"}`)
+	now = now.Add(ticketLifetime + time.Second)
+	refuse(c, expired, "expired")
+	if got := countDenied("attach_ro", "dev"); got != 1 {
+		t.Fatalf("expired ticket denials = %d, want 1", got)
+	}
+
+	for _, entry := range fx.audit() {
+		for _, secret := range []string{"ticket-inexistente", foreign, expired} {
+			if strings.Contains(entry.Action+entry.HostID+entry.Target, secret) {
+				t.Fatalf("audit stored a ticket: %+v", entry)
+			}
+		}
+		if entry.Outcome == "denied" && entry.HostID != "" && entry.HostID != "vps" {
+			t.Fatalf("unexpected host in denial: %+v", entry)
+		}
+	}
+}
+
 func TestStepUpIsBoundToSessionAndExpires(t *testing.T) {
 	fx := newInteractiveFixture(t)
 	now := time.Now()

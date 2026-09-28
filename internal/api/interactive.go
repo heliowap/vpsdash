@@ -473,6 +473,14 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	ticket, ok := s.takeTicket(r.URL.Query().Get("ticket"))
 	if !ok || ticket.sessionID != sessionID {
+		// Unknown, reused, expired, or foreign tickets are refusals too. The
+		// ticket value is a credential and never reaches the audit log; a
+		// ticket that no longer exists leaves host and target empty.
+		action := ticket.action
+		if action == "" {
+			action = "terminal"
+		}
+		s.recordAudit(r, action, ticket.host.ID, ticket.target, "denied")
 		errorResponse(w, http.StatusForbidden, "Pedido de terminal expirado. Tente novamente.")
 		return
 	}
