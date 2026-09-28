@@ -40,6 +40,8 @@ type Server struct {
 	resizes    []Resize
 	inputs     []byte
 	users      []string
+	stall      bool
+	stalled    int
 	wg         sync.WaitGroup
 }
 
@@ -114,6 +116,21 @@ func (s *Server) HandleExec(handler func(command string, stdin io.Reader, stdout
 	s.mu.Unlock()
 }
 
+// StallChannels makes the server leave new session channel requests
+// unanswered, so the client's channel open blocks until it gives up.
+func (s *Server) StallChannels(stall bool) {
+	s.mu.Lock()
+	s.stall = stall
+	s.mu.Unlock()
+}
+
+// Stalled returns how many channel opens were left unanswered.
+func (s *Server) Stalled() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stalled
+}
+
 // KnownHostsLine returns the known_hosts entry for the server address.
 func (s *Server) KnownHostsLine() string {
 	host, port, _ := net.SplitHostPort(s.Addr)
@@ -186,6 +203,15 @@ func (s *Server) handle(conn net.Conn) {
 	for newChannel := range chans {
 		if newChannel.ChannelType() != "session" {
 			_ = newChannel.Reject(ssh.UnknownChannelType, "only sessions")
+			continue
+		}
+		s.mu.Lock()
+		stall := s.stall
+		if stall {
+			s.stalled++
+		}
+		s.mu.Unlock()
+		if stall {
 			continue
 		}
 		channel, requests, err := newChannel.Accept()

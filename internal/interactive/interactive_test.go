@@ -138,6 +138,44 @@ func TestPTYEchoResizeAndAttachCommand(t *testing.T) {
 	}
 }
 
+func TestStalledChannelOpenRespectsDeadline(t *testing.T) {
+	host, dialer, server := fakeHost(t)
+	server.StallChannels(true)
+
+	started := time.Now()
+	if _, err := dialer.Run(context.Background(), host, []string{"true"}, time.Second, 10); err == nil {
+		t.Fatal("snippet with a stalled channel succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 4*time.Second {
+		t.Fatalf("snippet waited %s for a stalled channel", elapsed)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	started = time.Now()
+	if pty, err := dialer.OpenPTY(ctx, host, nil, 80, 24); err == nil {
+		_ = pty.Close()
+		t.Fatal("terminal with a stalled channel opened")
+	}
+	if elapsed := time.Since(started); elapsed > 4*time.Second {
+		t.Fatalf("terminal waited %s for a stalled channel", elapsed)
+	}
+	if server.Stalled() != 2 {
+		t.Fatalf("stalled channel opens = %d, want 2", server.Stalled())
+	}
+
+	// A caller without a deadline is still bounded by the dialer timeout.
+	dialer.Timeout = time.Second
+	started = time.Now()
+	if pty, err := dialer.OpenPTY(context.Background(), host, nil, 80, 24); err == nil {
+		_ = pty.Close()
+		t.Fatal("terminal with a stalled channel opened")
+	}
+	if elapsed := time.Since(started); elapsed > 4*time.Second {
+		t.Fatalf("terminal without deadline waited %s", elapsed)
+	}
+}
+
 func TestValidSessionName(t *testing.T) {
 	for name, valid := range map[string]bool{"dev": true, "agente 1": true, "": false, "a\nb": false, "a\x1b[31m": false, strings.Repeat("a", 257): false} {
 		if ValidSessionName(name) != valid {

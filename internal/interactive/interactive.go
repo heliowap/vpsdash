@@ -83,6 +83,21 @@ func (d Dialer) Dial(ctx context.Context, host config.Host) (*ssh.Client, error)
 	return ssh.NewClient(c, chans, reqs), nil
 }
 
+// guard closes client when ctx ends before the returned release is called.
+// x/crypto/ssh has no context for opening channels or sending channel
+// requests, so closing the connection is the only way to unblock them and
+// free the caller's interactive slot. release reports ctx's error when the
+// guard already fired; the connection is then closed.
+func guard(ctx context.Context, client *ssh.Client) (release func() error) {
+	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+	return func() error {
+		if !stop() && ctx.Err() != nil {
+			return fmt.Errorf("ssh session setup: %w", ctx.Err())
+		}
+		return nil
+	}
+}
+
 // Quote returns one POSIX shell word that the remote login shell turns back
 // into exactly arg. Every word is single-quoted, so no expansion, globbing,
 // assignment, or reserved word applies.
@@ -134,12 +149,26 @@ func (d Dialer) OpenPTY(ctx context.Context, host config.Host, argv []string, co
 	if err != nil {
 		return nil, err
 	}
+	setupCtx, cancel := context.WithTimeout(ctx, d.timeout())
+	defer cancel()
+	release := guard(setupCtx, client)
 	session, err := client.NewSession()
+	if gerr := release(); gerr != nil {
+		if session != nil {
+			_ = session.Close()
+		}
+		_ = client.Close()
+		return nil, gerr
+	}
 	if err != nil {
 		_ = client.Close()
 		return nil, err
 	}
+	// Channel requests below can also stall; a second guard covers them and
+	// is released only once the program has started.
+	release = guard(setupCtx, client)
 	fail := func(err error) (*PTY, error) {
+		_ = release()
 		_ = session.Close()
 		_ = client.Close()
 		return nil, err
@@ -160,6 +189,9 @@ func (d Dialer) OpenPTY(ctx context.Context, host config.Host, argv []string, co
 		err = session.Shell()
 	} else {
 		err = session.Start(CommandLine(argv))
+	}
+	if err == nil {
+		err = release()
 	}
 	if err != nil {
 		_ = writer.Close()
@@ -237,7 +269,14 @@ func (d Dialer) Run(ctx context.Context, host config.Host, argv []string, timeou
 		return Result{}, err
 	}
 	defer client.Close()
+	release := guard(ctx, client)
 	session, err := client.NewSession()
+	if gerr := release(); gerr != nil {
+		if session != nil {
+			_ = session.Close()
+		}
+		return Result{}, gerr
+	}
 	if err != nil {
 		return Result{}, err
 	}
