@@ -202,6 +202,7 @@ func TestInteractiveRoutesExistOnlyOnPrivateListener(t *testing.T) {
 		{"POST", "/api/terminal/tickets", `{"host":"vps","kind":"terminal"}`},
 		{"GET", "/api/terminal/ws", ""},
 		{"POST", "/api/hosts/vps/snippets/run", `{"name":"literal"}`},
+		{"POST", "/api/hosts/vps/sessions/send-keys", `{"session":"dev","key":"y","confirm":true}`},
 	}
 	publicClient := fx.login(fx.public.URL)
 	for _, route := range routes {
