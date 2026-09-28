@@ -274,7 +274,7 @@ func TestRunnerUnitDrainWaitsForIdleRunnerThenStopsQuietly(t *testing.T) {
 		t.Fatal(err)
 	}
 	alerts, err = s.PendingAlerts(ctx)
-	if err != nil || len(alerts) == 0 || alerts[0].Kind != "project_down" || !strings.Contains(alerts[0].Subject, opsUnit) {
+	if err != nil || len(alerts) == 0 || alerts[0].Kind != store.AlertRunnerOffline || !strings.Contains(alerts[0].Subject, opsUnit) {
 		t.Fatalf("genuine failure did not alert: %+v, %v", alerts, err)
 	}
 	projects, err = s.Projects(ctx)
