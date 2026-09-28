@@ -75,6 +75,9 @@ type Message struct {
 	Body  string `json:"body"`
 	URL   string `json:"url"`
 	Tag   string `json:"tag,omitempty"`
+	// Host and Session name the tmux session of an agent_waiting alert.
+	Host    string `json:"host,omitempty"`
+	Session string `json:"session,omitempty"`
 }
 
 // MessageFor describes a queued alert in the dashboard's language and points
@@ -90,12 +93,24 @@ func MessageFor(kind, subject, body string) Message {
 		m.Title, m.URL = "CI vermelho: "+subject, "/#fleet"
 	case store.AlertAgentWaiting:
 		m.Title, m.URL = "Agente esperando input: "+subject, "/#sessions"
+		m.Host, m.Session, m.URL = sessionFocus(subject)
 	default:
 		m.Title, m.URL = subject, "/#overview"
 	}
 	m.Title = truncate(m.Title, 200)
 	m.Body = truncate(m.Body, 1000)
 	return m
+}
+
+// sessionFocus splits an agent_waiting subject ("<host> / <session>") and
+// builds the same-origin URL that opens Sessions focused on that session.
+// Host IDs never contain spaces, so the first separator is the right one.
+func sessionFocus(subject string) (string, string, string) {
+	host, session, ok := strings.Cut(subject, " / ")
+	if !ok || host == "" || session == "" || len(subject) > 300 {
+		return "", "", "/#sessions"
+	}
+	return host, session, "/#sessions?" + url.Values{"host": {host}, "session": {session}}.Encode()
 }
 
 func truncate(value string, limit int) string {

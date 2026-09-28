@@ -296,7 +296,7 @@ func TestAgentWaitingIsPushOnly(t *testing.T) {
 		t.Fatalf("a session still waiting was notified again: %d requests", len(requests))
 	}
 	got := requests[0]
-	if got.err != nil || got.message.Title != "Agente esperando input: vps / dev" || got.message.URL != "/#sessions" || got.header.Get("TTL") != "1800" {
+	if got.err != nil || got.message.Title != "Agente esperando input: vps / dev" || got.message.URL != "/#sessions?host=vps&session=dev" || got.message.Host != "vps" || got.message.Session != "dev" || got.header.Get("TTL") != "1800" {
 		t.Fatalf("request = %+v", got)
 	}
 	if !strings.Contains(got.message.Body, "claude aguarda sua resposta na sessão dev") {
@@ -380,5 +380,25 @@ func TestParseKeysRejectsMismatchedPairAndSubject(t *testing.T) {
 	}
 	if _, err := webpush.ParseKeys(private, public, "https://app.example.invalid"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAgentWaitingMessageFocusesTheSession(t *testing.T) {
+	m := webpush.MessageFor(store.AlertAgentWaiting, "vps / agente 1&x=#/ok", "corpo")
+	if m.Host != "vps" || m.Session != "agente 1&x=#/ok" {
+		t.Fatalf("focus = %q %q", m.Host, m.Session)
+	}
+	// The URL stays a same-origin path; the session name is encoded inside
+	// the hash so it cannot add parameters or leave the page.
+	if m.URL != "/#sessions?host=vps&session=agente+1%26x%3D%23%2Fok" {
+		t.Fatalf("url = %q", m.URL)
+	}
+	for _, subject := range []string{"sem separador", " / dev", "vps / "} {
+		if m := webpush.MessageFor(store.AlertAgentWaiting, subject, ""); m.URL != "/#sessions" || m.Host != "" || m.Session != "" {
+			t.Fatalf("%q = %+v", subject, m)
+		}
+	}
+	if m := webpush.MessageFor(store.AlertProjectDown, "vps / dev", ""); m.Host != "" || m.URL != "/#projects" {
+		t.Fatalf("project alert = %+v", m)
 	}
 }
